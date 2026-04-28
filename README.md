@@ -34,6 +34,57 @@ videodashboard2/
   analysis.py          # Core metadata extraction + scoring logic
 ```
 
+## Screenshots And Demo
+
+Add your product visuals in `docs/screenshots` and update this section as you capture newer UI states. The screenshots you shared map well to the main app entry, the hierarchy page, and the analysis dashboard.
+
+Suggested media files:
+
+- docs/screenshots/hero.png - landing / analyze screen
+- docs/screenshots/hierarchy.png - DV/HDR ranking page
+- docs/screenshots/dashboard.png - results dashboard / comparison view
+- docs/screenshots/tv-usb-panel.png - TV and USB compatibility panel
+- docs/screenshots/analysis-demo.gif - short walkthrough GIF
+
+Markdown example:
+
+```md
+![Hero](docs/screenshots/hero.png)
+![Hierarchy](docs/screenshots/hierarchy.png)
+![Dashboard](docs/screenshots/dashboard.png)
+![TV and USB Panel](docs/screenshots/tv-usb-panel.png)
+![Demo GIF](docs/screenshots/analysis-demo.gif)
+```
+
+## Social Preview / Repo Card
+
+I added a ready-to-use social preview SVG you can use as your repository card (1280×640):
+
+- `docs/social-card.svg`
+
+How to use it on GitHub:
+
+1. Open your repository on GitHub and go to Settings → Social preview.
+2. Upload a PNG/JPEG (or an exported PNG of the SVG) as the repository social preview image.
+
+If you prefer to upload a PNG instead of the SVG, convert it locally:
+
+- ImageMagick (convert):
+
+```bash
+magick convert docs/social-card.svg -background none -resize 1280x640 docs/social-card.png
+```
+
+- Inkscape (CLI):
+
+```bash
+inkscape docs/social-card.svg --export-type=png --export-width=1280 --export-height=640 --export-filename=docs/social-card.png
+```
+
+Notes:
+- Keep important text and logos inside the 40pt safe margin (approx 53px) shown in the SVG.
+- Replace the placeholder screenshot area in the SVG by editing the file or overlaying your exported UI shots, especially the analyze screen and hierarchy view.
+
 ## Prerequisites
 
 Install these before running:
