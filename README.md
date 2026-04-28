@@ -151,4 +151,6 @@ npm run lint     # lint frontend code
 
 ## License
 
-![License: MIT]
+## License
+This project is licensed under the [MIT License](LICENSE)
+[![License: MIT](https://shields.io)](LICENSE)
