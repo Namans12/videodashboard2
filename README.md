@@ -34,17 +34,16 @@ videodashboard2/
   analysis.py          # Core metadata extraction + scoring logic
 ```
 
-## Screenshots 
+## Screenshots
 
-- docs/screenshots/hero.png - landing / analyze screen
-- docs/screenshots/hierarchy.png - DV/HDR ranking page
-
-Markdown example:
-
-```md
 ![Hero](docs/screenshots/hero.png)
 ![Hierarchy](docs/screenshots/hierarchy.png)
-```
+
+### Landing / Analyze Screen
+![Landing / Analyze Screen](docs/screenshots/hero.png)
+
+### DV / HDR Ranking Page
+![DV / HDR Ranking](docs/screenshots/hierarchy.png)
 
 ## Social Preview / Repo Card
 
