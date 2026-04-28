@@ -26,7 +26,7 @@ A full-stack video analysis app that compares local movie files using MediaInfo,
 ## Project Structure
 
 ```text
-videodashboard2/
+videolyzer-dashboard/
   src/                 # React UI
   scripts/             # Helper scripts for polling/SSE testing
   uploads/             # Temporary upload storage (auto-used by backend)
