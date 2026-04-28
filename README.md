@@ -34,26 +34,16 @@ videodashboard2/
   analysis.py          # Core metadata extraction + scoring logic
 ```
 
-## Screenshots And Demo
-
-Add your product visuals in `docs/screenshots` and update this section as you capture newer UI states. The screenshots you shared map well to the main app entry, the hierarchy page, and the analysis dashboard.
-
-Suggested media files:
+## Screenshots 
 
 - docs/screenshots/hero.png - landing / analyze screen
 - docs/screenshots/hierarchy.png - DV/HDR ranking page
-- docs/screenshots/dashboard.png - results dashboard / comparison view
-- docs/screenshots/tv-usb-panel.png - TV and USB compatibility panel
-- docs/screenshots/analysis-demo.gif - short walkthrough GIF
 
 Markdown example:
 
 ```md
 ![Hero](docs/screenshots/hero.png)
 ![Hierarchy](docs/screenshots/hierarchy.png)
-![Dashboard](docs/screenshots/dashboard.png)
-![TV and USB Panel](docs/screenshots/tv-usb-panel.png)
-![Demo GIF](docs/screenshots/analysis-demo.gif)
 ```
 
 ## Social Preview / Repo Card
