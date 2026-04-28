@@ -4,20 +4,6 @@
 [![Backend](https://img.shields.io/badge/Backend-FastAPI-0ea5a5?logo=fastapi\&logoColor=white)](https://fastapi.tiangolo.com)
 [![Build](https://img.shields.io/badge/Build-Vite%20%2B%20TypeScript-ff7a00?logo=vite\&logoColor=white)](https://vitejs.dev)
 [![Lint](https://img.shields.io/badge/Lint-ESLint-4b32c3?logo=eslint\&logoColor=white)](https://eslint.org)
-
-![Frontend](https://img.shields.io/badge/Frontend-React%2019-1f7a8c?logo=react\&logoColor=white)
-![Backend](https://img.shields.io/badge/Backend-FastAPI-0ea5a5?logo=fastapi\&logoColor=white)
-![Build](https://img.shields.io/badge/Build-Vite%20%2B%20TypeScript-ff7a00?logo=vite\&logoColor=white)
-![Lint](https://img.shields.io/badge/Lint-ESLint-4b32c3?logo=eslint\&logoColor=white)
-[![License](https://img.shields.io/github/license/Namans12/videolyzer-dashboard)](LICENSE)
-
-
-# Video Metadata Analyzer Dashboard
-
-![Frontend](https://img.shields.io/badge/Frontend-React%2019-1f7a8c?logo=react\&logoColor=white)
-![Backend](https://img.shields.io/badge/Backend-FastAPI-0ea5a5?logo=fastapi\&logoColor=white)
-![Build](https://img.shields.io/badge/Build-Vite%20%2B%20TypeScript-ff7a00?logo=vite\&logoColor=white)
-![Lint](https://img.shields.io/badge/Lint-ESLint-4b32c3?logo=eslint\&logoColor=white)
 [![License](https://img.shields.io/github/license/Namans12/videolyzer-dashboard)](LICENSE)
 
 A full-stack video analysis app that compares local movie files using MediaInfo, ffprobe, ffmpeg, and dovi_tool, then ranks playback quality for Sony Bravia 8 Mark II USB playback.
