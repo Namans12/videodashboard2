@@ -124,7 +124,7 @@ def parse_fraction(value: Any) -> float | None:
         numerator_text, denominator_text = text.split("/", 1)
         num = coerce_float(numerator_text)
         den = coerce_float(denominator_text)
-        if num is None or den in {None, 0}:
+        if num is None or den is None or den == 0:
             return None
         return num / den
     return coerce_float(text)
@@ -191,13 +191,13 @@ def run_mediainfo(file_path: str) -> dict[str, Any] | None:
     if not mediainfo_bin:
         return None
     result = run_command([mediainfo_bin, "--Output=JSON", file_path], timeout=MEDIAINFO_TIMEOUT_SECONDS)
-    if command_failed(result):
+    if result is None or command_failed(result):
         return None
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError:
         return None
-
+    
 
 def run_ffprobe(file_path: str) -> dict[str, Any] | None:
     ffprobe_bin = resolve_tool("ffprobe")
@@ -208,7 +208,7 @@ def run_ffprobe(file_path: str) -> dict[str, Any] | None:
          "-show_streams", "-show_format", file_path],
         timeout=FFPROBE_TIMEOUT_SECONDS,
     )
-    if command_failed(result):
+    if result is None or command_failed(result):
         return None
     try:
         return json.loads(result.stdout)
@@ -470,8 +470,42 @@ def detect_layer_variant(filepath: str, base_profile: str, el: str,
                 "Dual-layer (FEL/MEL unknown)",
                 f"Profile 7 dual-layer; compat id={compat_id} does not prove FEL vs MEL.",
             )
-    return "Dual-layer (FEL/MEL unknown)", "Dual-layer DV detected; metadata here cannot prove FEL vs MEL."
+    bitrate_guess = estimate_layer_variant_from_bitrate(filepath)
+    if bitrate_guess == "FEL":
+        return "FEL", "Bitrate-ratio heuristic suggests FEL (EL >= 15% of BL)."
+    if bitrate_guess == "MEL":
+        return "MEL", "Bitrate-ratio heuristic suggests MEL (EL < 15% of BL)."
+    return "Dual-layer (FEL/MEL unknown)", "Dual-layer DV detected; metadata cannot prove FEL vs MEL."
 
+def estimate_layer_variant_from_bitrate(file_path: str) -> str | None:
+    """
+    Heuristic: if two video streams exist, compare their bitrates.
+    FEL's EL is typically 30-60% of BL bitrate.
+    MEL's EL is tiny (under 15%).
+    Returns 'FEL', 'MEL', or None if undetermined.
+    """
+    ffprobe_bin = resolve_tool("ffprobe")
+    if not ffprobe_bin:
+        return None
+    result = run_command(
+        [ffprobe_bin, "-v", "error", "-select_streams", "v",
+         "-show_entries", "stream=index,bit_rate",
+         "-print_format", "json", file_path],
+        timeout=FFPROBE_TIMEOUT_SECONDS,
+    )
+    if result is None or command_failed(result):
+        return None
+    try:
+        streams = json.loads(result.stdout).get("streams", [])
+        if len(streams) >= 2:
+            br0 = coerce_float(streams[0].get("bit_rate")) or 0
+            br1 = coerce_float(streams[1].get("bit_rate")) or 0
+            if br0 > 0 and br1 > 0:
+                ratio = min(br0, br1) / max(br0, br1)
+                return "FEL" if ratio > 0.15 else "MEL"
+    except (json.JSONDecodeError, KeyError, ZeroDivisionError):
+        pass
+    return None
 
 # ── Audio helpers ────────────────────────────────────────────────────────────
 
@@ -791,7 +825,7 @@ def create_ffmpeg_video_sample(file_path: str,
         return None, None
     sample_path = make_temp_path(".hevc")
     result = run_command(
-        [ffmpeg_bin, "-y", "-v", "error", "-i", file_path,
+        [ffmpeg_bin, "-y", "-hwaccel", "cuda", "-v", "error", "-i", file_path,
          "-map", "0:v:0", "-an", "-sn", "-dn", "-c", "copy",
          "-frames:v", str(frame_limit), "-f", "hevc", sample_path],
         timeout=FFMPEG_TIMEOUT_SECONDS,
@@ -875,7 +909,7 @@ def run_dovi_partial_scan(
 
         info_result = run_command([dovi_bin, "info", "-s", "-i", rpu_path],
                                    timeout=DOVI_TIMEOUT_SECONDS)
-        if command_failed(info_result):
+        if info_result is None or command_failed(info_result):
             stderr = info_result.stderr.strip() if info_result else ""
             return {"status": "error",
                     "headline": "dovi_tool could not summarize RPU data.",
@@ -1156,7 +1190,7 @@ def analyze_file(filepath: str, skip_dovi_scan: bool = False) -> dict[str, Any] 
                            dv_info["base_profile"], dv_info["el"])
 
     tv_support = tv_compatibility_heuristic(
-        base_profile=dv_info["base_profile"],
+        base_profile=dv_info["profile"],
         profile_label=dv_info["profile"],
         el=dv_info["el"],
         layer_variant=dv_info["layer_variant"],
@@ -1165,7 +1199,7 @@ def analyze_file(filepath: str, skip_dovi_scan: bool = False) -> dict[str, Any] 
     )
 
     quality_score = score_video(
-        base_profile=dv_info["base_profile"],
+        base_profile=dv_info["profile"],
         layer_variant=dv_info["layer_variant"],
         bitrate_mbps=bitrate_mbps,
         source=source,
@@ -1177,7 +1211,7 @@ def analyze_file(filepath: str, skip_dovi_scan: bool = False) -> dict[str, Any] 
     )
 
     tv_score, tv_label = score_for_tv(
-        base_profile=dv_info["base_profile"],
+        base_profile=dv_info["profile"],
         bitrate_mbps=bitrate_mbps,
         bit_depth=bit_depth,
         audio_score=audio_score,
@@ -1230,7 +1264,7 @@ def analyze_file(filepath: str, skip_dovi_scan: bool = False) -> dict[str, Any] 
         f"| {tv_support['container_compatibility']}"
     )
 
-    dv_support_entry = BRAVIA_8_II["dv_support"].get(dv_info["base_profile"], ("Unknown", ""))
+    dv_support_entry = BRAVIA_8_II["dv_support"].get(dv_info["profile"], ("Unknown", ""))
 
     return {
         "file":             os.path.basename(filepath),

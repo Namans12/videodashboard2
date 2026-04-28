@@ -63,7 +63,7 @@
 .nav-links a:hover { color: var(--accent-bright); }
 
 /* ── Hero ────────────────────────────────────────────────────────────────────── */
-.hero-section { padding: 68px 24px 90px; }
+.hero-section { padding: 40px 24px 90px; }
 
 .hero-copy,
 .hero-panel,
@@ -246,12 +246,14 @@
 
 /* ── Error ───────────────────────────────────────────────────────────────────── */
 .error-box {
-  margin-top: 20px;
+  margin-top: -8px;
   border: 1px solid rgba(255,59,48,.35);
   border-radius: 12px;
   background: rgba(127,29,29,.2);
   color: #fecaca;
   padding: 12px 14px;
+  position: relative;
+  z-index: 10;
 }
 
 /* ── Dashboard ───────────────────────────────────────────────────────────────── */
@@ -323,7 +325,6 @@
 
 /* ── Score bar chart ─────────────────────────────────────────────────────────── */
 .score-bar-chart { display: flex; flex-direction: column; gap: 18px; }
-.sbc-metric      {}
 .sbc-metric-label { display: block; font-size: 13px; font-weight: 600; color: var(--soft-text); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .1em; }
 .sbc-tracks      { display: flex; flex-direction: column; gap: 6px; }
 .sbc-track-row   { display: flex; align-items: center; gap: 8px; }
@@ -569,6 +570,13 @@
 .hierarchy-list p { margin: 5px 0 0; font-size: 13px; line-height: 1.47; color: rgba(29,29,31,.75); }
 
 .quick-ranking { letter-spacing: .2px; }
+
+.approx {
+  color: var(--accent-bright);
+  font-weight: 600;
+  padding: 0 4px;
+  opacity: 0.9;
+}
 
 /* ── Rank color scale ────────────────────────────────────────────────────────── */
 .r1  { color: #ffd700; text-shadow: 0 0 8px rgba(255,215,0,.6); }

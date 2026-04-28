@@ -1,13 +1,15 @@
-import {
+import React, {
   type ChangeEvent,
   type DragEvent,
   useRef,
   useState,
+  useEffect
 } from "react";
 import axios from "axios";
 import type { VideoData } from "./types";
 import { BRAVIA_8_II_SPEC } from "./types";
 import "./App.css";
+import Switch from "./Switch";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const VIDEO_EXTS = [".mkv", ".mp4", ".ts", ".m2ts", ".hevc", ".h265"];
@@ -34,9 +36,7 @@ const HDR_HIERARCHY = [
 const FILE_COLORS = ["#ffd700", "#2997ff", "#30d158", "#ff9f0a", "#bf5af2"];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-function toArray<T>(value: T | T[]): T[] {
-  return Array.isArray(value) ? value : [value];
-}
+// Helper removed — no longer used after unifying analysis flow.
 
 function scoreColor(score: number) {
   if (score >= 70) return "#30d158";
@@ -47,8 +47,9 @@ function scoreColor(score: number) {
 function getVerdict(item: VideoData, isBest: boolean) {
   if (isBest) return "BEST CHOICE";
   if ((item.tv_score ?? 0) >= 75 && (item.confidence_score ?? 0) >= 60) return "GREAT";
-  if ((item.score ?? 0) < 40) return "AVOID";
+  if ((item.score ?? 0) < 15) return "AVOID";
   if ((item.confidence_score ?? 0) < 40) return "LOW CONFIDENCE";
+  if ((item.tv_score ?? 0) >= 30) return "COMPARABLE";
   return "OK";
 }
 
@@ -415,7 +416,15 @@ export default function App() {
   const [selectedFiles,    setSelectedFiles]    = useState<File[]>([]);
   const [dragActive,       setDragActive]       = useState(false);
   const [fastMode,         setFastMode]         = useState(true);
-  const [isLightMode,      setIsLightMode]      = useState(false);
+  const [isLightMode,      setIsLightMode]      = useState(() => {
+    return localStorage.getItem("theme") === "light";
+  });
+  useEffect(() => {
+  localStorage.setItem("theme", isLightMode ? "light" : "dark");
+  }, [isLightMode]);
+  const [progress,         setProgress]         = useState("");
+  const [jobId,       setJobId]       = useState<string | null>(null);
+  const [progressMsg, setProgressMsg] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // ── File selection ─────────────────────────────────────────────────────────
@@ -470,41 +479,109 @@ export default function App() {
       let results: VideoData[] = [];
 
       if (trimmedPath) {
-        try {
-          const res = await axios.get<VideoData[]>(
-            `${API}/scan-folder/?path=${encodeURIComponent(trimmedPath)}&fast=${fastMode}`
-          );
-          results = toArray(res.data);
-        } catch {
-          const res = await axios.get<VideoData[]>(
-            `${API}/analyze-path/?path=${encodeURIComponent(trimmedPath)}&fast=${fastMode}`
-          );
-          results = toArray(res.data);
-        }
-      } else if (selectedFiles.length === 1) {
-        const formData = new FormData();
-        formData.append("file", selectedFiles[0]);
-        const res = await fetch(`${API}/analysis/?fast=${fastMode}`, {
-          method: "POST",
-          body: formData,
-        });
+        // Use background job + SSE for pasted paths as well (file or folder on server).
+        const res = await fetch(
+          `${API}/analyze-path/?path=${encodeURIComponent(trimmedPath)}&fast=${fastMode}`
+        );
         if (!res.ok) {
           const payload = await res.json().catch(() => ({})) as { detail?: string };
-          throw new Error(payload.detail ?? "Unable to analyze file.");
+          const prefix = res.status === 507 ? "🖴 Disk full: " : "";
+          throw new Error(prefix + (payload.detail ?? "Analysis request failed."));
         }
-        results = toArray(await res.json() as VideoData | VideoData[]);
-      } else {
+
+        const payload = await res.json().catch(() => ({})) as { job_id?: string };
+        const jobId = payload.job_id as string | undefined;
+        if (!jobId) throw new Error("No job_id returned from server.");
+
+        setProgress("Queued");
+
+        const poll = async (jobId: string) => {
+          const r = await fetch(`${API}/job/${jobId}`);
+          const job = await r.json();
+
+          setProgress(`${job.current} — ${job.progress}`);
+
+          if (job.status === "done") {
+            setData(job.results);
+            setIsLoading(false);
+          } else {
+            setTimeout(() => void poll(jobId), 600);
+          }
+        };
+
+        // Try SSE first, fall back to polling if unavailable or on error.
+        if (typeof EventSource !== "undefined") {
+          let es: EventSource | null = null;
+          try {
+            es = new EventSource(`${API}/progress/${jobId}`);
+            es.onmessage = (ev) => {
+              try {
+                const pkt = JSON.parse(ev.data as string);
+                if (pkt === "__done__" || pkt.msg === "__done__") {
+                  es?.close();
+                  void poll(jobId);
+                  return;
+                }
+                const msg = pkt.msg ?? pkt.message ?? pkt;
+                const ts = pkt.ts ?? pkt.timestamp ?? "";
+                setProgress(`${msg} ${ts ? ` — ${ts}` : ""}`);
+              } catch (_) {
+                // ignore malformed SSE messages
+              }
+            };
+            es.onerror = () => {
+              es?.close();
+              void poll(jobId);
+            };
+          } catch (e) {
+            void poll(jobId);
+          }
+        } else {
+          void poll(jobId);
+        }
+
+        results = [];
+      } else if (selectedFiles.length > 0) {
         const formData = new FormData();
         selectedFiles.forEach((f) => formData.append("files", f));
         const res = await fetch(`${API}/analyze-multiple/?fast=${fastMode}`, {
-          method: "POST",
-          body: formData,
+          method: "POST", body: formData,
         });
         if (!res.ok) {
           const payload = await res.json().catch(() => ({})) as { detail?: string };
-          throw new Error(payload.detail ?? "Multi-file analysis failed.");
+          const prefix = res.status === 507 ? "🖴 Disk full: "
+                       : res.status === 413 ? "📦 File too large: " : "";
+          throw new Error(prefix + (payload.detail ?? "Multi-file analysis failed."));
         }
-        results = toArray(await res.json() as VideoData | VideoData[]);
+        const { job_id } = await res.json() as { job_id: string; total: number };
+        setJobId(job_id);
+
+        // Poll /job/{job_id} every 600ms until done
+        await new Promise<void>((resolve, reject) => {
+          const poll = async () => {
+            try {
+              const jobRes  = await fetch(`${API}/job/${job_id}`);
+              const job     = await jobRes.json() as {
+                status: string; progress: string; current: string;
+                results: VideoData[]; error: string | null;
+              };
+              setProgressMsg(`${job.current || "..."} (${job.progress})`);
+              if (job.status === "done") {
+                results = job.results;
+                resolve();
+              } else if (job.status === "error") {
+                reject(new Error(job.error ?? "Analysis failed."));
+              } else {
+                setTimeout(poll, 600);
+              }
+            } catch (e) { reject(e); }
+          };
+          poll();
+        });
+        setJobId(null);
+        setProgressMsg("");
+
+        results = [];
       }
 
       results = results
@@ -518,11 +595,19 @@ export default function App() {
     } catch (err: unknown) {
       let message = "Analysis failed.";
       if (axios.isAxiosError(err)) {
-        message =
-          (typeof err.response?.data?.detail === "string" && err.response.data.detail) ||
-          err.message || message;
+        const status = err.response?.status;
+        const detail = err.response?.data?.detail;
+        if (status === 507) {
+          message = `🖴 Server disk full: ${detail ?? "Free up space on the server and retry."}`;
+        } else {
+          message =
+            (typeof detail === "string" && detail) || err.message || message;
+        }
       } else if (err instanceof Error) {
-        message = err.message;
+        const text = err.message;
+        message = text.includes("507")
+          ? "🖴 Server disk full — free up space in the uploads/ folder and retry."
+          : text;
       }
       setError(message);
       setData([]);
@@ -550,13 +635,7 @@ export default function App() {
           {showDashboard && <a href="#tv-usb">TV &amp; USB</a>}
           <a href="#hierarchy">Hierarchy</a>
         </div>
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={() => setIsLightMode((v) => !v)}
-        >
-          {isLightMode ? "Dark Mode" : "Light Mode"}
-        </button>
+        <Switch isLightMode={isLightMode} setIsLightMode={setIsLightMode} />
       </nav>
 
       {/* ── Hero ────────────────────────────────────────────────────────── */}
@@ -687,6 +766,16 @@ export default function App() {
             </div>
           </div>
 
+          {jobId && progressMsg && (
+            <div style={{
+              margin: "12px 0 0", padding: "10px 14px",
+              borderRadius: 10, background: "rgba(41,151,255,0.1)",
+              border: "1px solid rgba(41,151,255,0.25)",
+              fontSize: 13, color: "var(--accent-bright)",
+            }}>
+              ⏳ Analyzing: {progressMsg}
+            </div>
+          )}
           <div className="analyze-row">
             <button
               onClick={() => void analyzeSelection()}
@@ -713,6 +802,7 @@ export default function App() {
       />
 
       {error && <div className="error-box">{error}</div>}
+      {progress && <div className="error-box">{progress}</div>}
 
       {/* ── Dashboard ───────────────────────────────────────────────────── */}
       {showDashboard && (
@@ -962,14 +1052,13 @@ export default function App() {
             <b>Quick ranking:</b>{" "}
             <span className="rank r1">P7 FEL</span> {">"}
             <span className="rank r2"> P7 MEL</span> {">"}
-            <span className="rank r3"> P8.1 ≈ P5</span> {">"}
+            <span className="rank r3"> P8.1 <span className="approx">≈</span> P5 </span> {">"}
             <span className="rank r3"> P8.4</span> {">"}
             <span className="rank r5"> P8.2</span> {">"}
             <span className="rank r6"> P4</span> {">"}
             <span className="rank r7"> HDR10+</span> {">"}
             <span className="rank r9"> HDR10</span> {">"}
-            <span className="rank r10"> HLG</span> {">"}
-            <span className="rank r11"> SDR</span>
+            <span className="rank r10"> HLG</span>
           </p>
         </div>
 

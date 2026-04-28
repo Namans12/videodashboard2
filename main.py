@@ -1,18 +1,52 @@
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from starlette.datastructures import UploadFile as StarletteUploadFile
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import partial
-from typing import List
-import logging
+import errno
 import shutil
 import os
 import uuid
+import logging
+from contextlib import asynccontextmanager
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import partial
+from typing import List
+import time
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.datastructures import UploadFile as StarletteUploadFile
+from fastapi.responses import StreamingResponse
+import asyncio
+import json
 
 from analysis import analyze_file, scan_folder
 
-app = FastAPI(title="Video Metadata Analyzer")
 logger = logging.getLogger("video-analyzer.api")
+
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+MAX_UPLOAD_BYTES = 75 * 1024 * 1024 * 1024    # 75 GB
+MIN_FREE_BYTES   = 20 * 1024 * 1024 * 1024  # 20 GB
+
+_jobs: dict[str, dict] = {}
+_job_progress: dict[str, list[str]] = {}
+
+def _patch_result_path(result: dict, temp_path: str, orig_name: str) -> None:
+    result["file"] = orig_name
+    temp_base = os.path.basename(temp_path)
+    if "path" in result and temp_base in result["path"]:
+        result["path"] = orig_name.join(result["path"].rsplit(temp_base, 1))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    for f in os.listdir(UPLOAD_DIR):
+        try:
+            os.remove(os.path.join(UPLOAD_DIR, f))
+        except OSError:
+            pass
+    logger.info("Upload dir cleaned on startup.")
+    yield
+
+
+app = FastAPI(title="Video Metadata Analyzer", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,17 +56,119 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def check_disk_space() -> None:
+    try:
+        usage = shutil.disk_usage(UPLOAD_DIR)
+        if usage.free < MIN_FREE_BYTES:
+            free_gb = usage.free / 1_073_741_824
+            raise HTTPException(
+                status_code=507,
+                detail=f"Server storage almost full ({free_gb:.1f} GB free). "
+                       "Clean the uploads/ folder and retry.",
+            )
+    except HTTPException:
+        raise
+    except OSError:
+        pass
 
 
-def save_upload(file: UploadFile) -> str:
+def _run_batch_job(job_id: str, saved_paths: list[str],
+                   path_name_map: dict[str, str], fast: bool) -> None:
+    job    = _jobs[job_id]
+    total  = len(saved_paths)
+    done   = 0
+    results: list = []
+    worker = partial(analyze_file, skip_dovi_scan=fast)
+
+    def emit(msg: str) -> None:
+        job["events"].append({"msg": msg, "ts": time.time()})
+        job["progress"] = f"{done}/{total}"
+
+    emit(f"Starting analysis of {total} file(s)…")
+
+    with ThreadPoolExecutor(max_workers=min(4, total)) as executor:
+        future_map = {
+            executor.submit(worker, path): (path, path_name_map[path])
+            for path in saved_paths
+        }
+        for future in as_completed(future_map):
+            temp_path, orig_name = future_map[future]
+            job["current"] = orig_name
+            try:
+                result = future.result()
+                if result:
+                    _patch_result_path(result, temp_path, orig_name)
+                    results.append(result)
+                    emit(f"✓ {orig_name}")
+                else:
+                    emit(f"✗ {orig_name} — no data extracted")
+            except Exception as exc:
+                logger.warning("Analysis failed for %s: %s", orig_name, exc)
+                emit(f"✗ {orig_name} — {exc}")
+            finally:
+                done += 1
+                job["progress"] = f"{done}/{total}"
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+
+    if results:
+        job["results"] = rank_results(results)
+        job["status"]  = "done"
+        emit(f"Done — {len(results)}/{total} analysed successfully.")
+    else:
+        job["status"] = "error"
+        job["error"]  = "No files could be analyzed."
+        emit("Error: no files could be analysed.")
+
+
+def save_upload(file: UploadFile) -> tuple[str, str]:
     original_name = os.path.basename(file.filename or "upload.bin")
     unique_name   = f"{uuid.uuid4().hex}_{original_name}"
     file_path     = os.path.join(UPLOAD_DIR, unique_name)
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    return file_path
+    bytes_written = 0
+    chunk_size    = 1024 * 1024  # 1 MB
+    try:
+        with open(file_path, "wb") as buffer:
+            while True:
+                chunk = file.file.read(chunk_size)
+                if not chunk:
+                    break
+                bytes_written += len(chunk)
+                if bytes_written > MAX_UPLOAD_BYTES:
+                    buffer.close()
+                    try:
+                        os.remove(file_path)
+                    except OSError:
+                        pass
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File too large — max {MAX_UPLOAD_BYTES // (1024*1024)} MB allowed.",
+                    )
+                buffer.write(chunk)
+    except HTTPException:
+        raise
+    except OSError as exc:
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+        if exc.errno == errno.ENOSPC:
+            raise HTTPException(
+                status_code=507,
+                detail="Server disk is full. Free up space and retry.",
+            )
+        raise HTTPException(status_code=500, detail=f"Could not save upload: {exc}")
+    finally:
+        try:
+            file.file.close()
+        except Exception:
+            pass
+    return file_path, original_name
 
 
 def rank_results(results: list) -> list:
@@ -51,7 +187,18 @@ def rank_results(results: list) -> list:
     return results
 
 
-# ── Single file upload ───────────────────────────────────────────────────────
+# ── Routes ───────────────────────────────────────────────────────────────────
+
+@app.get("/health/")
+def health_check():
+    usage = shutil.disk_usage(UPLOAD_DIR)
+    return {
+        "status":       "ok",
+        "disk_free_gb": round(usage.free  / 1_073_741_824, 2),
+        "disk_used_gb": round(usage.used  / 1_073_741_824, 2),
+        "upload_dir":   os.path.abspath(UPLOAD_DIR),
+    }
+
 
 @app.post("/analysis/")
 async def analyze_video(request: Request, fast: bool = Query(False)):
@@ -59,6 +206,8 @@ async def analyze_video(request: Request, fast: bool = Query(False)):
     if "multipart/form-data" not in content_type.lower():
         raise HTTPException(status_code=400,
                             detail="Upload must use multipart/form-data with a file field.")
+    check_disk_space()
+
     try:
         form = await request.form()
     except Exception as exc:
@@ -70,72 +219,143 @@ async def analyze_video(request: Request, fast: bool = Query(False)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="Uploaded file has no filename.")
 
-    file_path = save_upload(file)   # type: ignore
+    temp_path, orig_name = save_upload(file)   # type: ignore[arg-type]
     try:
-        result = analyze_file(file_path, skip_dovi_scan=fast)
+        result = analyze_file(temp_path, skip_dovi_scan=fast)
     finally:
-        try: os.remove(file_path)
-        except OSError: pass
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
 
     if not result:
         raise HTTPException(status_code=400, detail="Unable to analyze the selected file.")
 
+    _patch_result_path(result, temp_path, orig_name)
     result["batch_rank"] = 1
     return [result]
 
 
-# ── Multiple file upload ─────────────────────────────────────────────────────
-
 @app.post("/analyze-multiple/")
 async def analyze_multiple(
+    background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
     fast: bool = Query(False),
 ):
     if not files:
         raise HTTPException(status_code=400, detail="No files provided.")
 
-    saved_paths: list[str] = []
-    try:
-        for f in files:
-            if not f.filename:
-                continue
-            saved_paths.append(save_upload(f))
+    check_disk_space()
 
-        if not saved_paths:
-            raise HTTPException(status_code=400, detail="All uploaded files were rejected.")
+    saved_paths:   list[str]      = []
+    path_name_map: dict[str, str] = {}
 
-        results: list = []
-        worker = partial(analyze_file, skip_dovi_scan=fast)
+    for f in files:
+        if not f.filename:
+            continue
+        temp_path, orig_name = save_upload(f)
+        saved_paths.append(temp_path)
+        path_name_map[temp_path] = orig_name
 
-        with ThreadPoolExecutor(max_workers=min(4, len(saved_paths))) as executor:
-            future_map = {executor.submit(worker, path): path for path in saved_paths}
-            for future in as_completed(future_map):
-                result = future.result()
-                if result:
-                    results.append(result)
-    finally:
-        for path in saved_paths:
-            try: os.remove(path)
-            except OSError: pass
+    if not saved_paths:
+        raise HTTPException(status_code=400, detail="All uploaded files were rejected.")
 
-    if not results:
-        raise HTTPException(status_code=400, detail="No files could be analyzed.")
-
-    return rank_results(results)
+    job_id = uuid.uuid4().hex
+    _jobs[job_id] = {
+        "status": "running", "progress": f"0/{len(saved_paths)}",
+        "current": "", "total": len(saved_paths),
+        "results": [], "error": None, "events": [],
+    }
+    background_tasks.add_task(_run_batch_job, job_id, saved_paths, path_name_map, fast)
+    return {"job_id": job_id, "total": len(saved_paths)}
 
 
-# ── Path / folder endpoints ──────────────────────────────────────────────────
+@app.get("/progress/{job_id}")
+async def stream_progress(job_id: str):
+    async def event_stream():
+        seen = 0
+        while True:
+            events = _job_progress.get(job_id, [])
+            while seen < len(events):
+                yield f"data: {events[seen]}\n\n"
+                seen += 1
+                # Check if the last event is the done sentinel
+                try:
+                    last_event = json.loads(events[seen - 1])
+                    if last_event.get("msg") == "__done__":
+                        return
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+            await asyncio.sleep(0.2)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
 
 @app.get("/analyze-path/")
-def analyze_video_path(path: str, fast: bool = Query(False)):
+def analyze_video_path(background_tasks: BackgroundTasks, path: str, fast: bool = Query(False)):
+    """Accept a server-local file or folder path and run analysis as a background job.
+    Returns a `job_id` immediately and emits progress via the existing SSE `/progress/{job_id}` endpoint.
+    """
     path = path.strip().strip('"')
-    if not os.path.isfile(path):
-        raise HTTPException(status_code=400, detail="File does not exist.")
-    result = analyze_file(path, skip_dovi_scan=fast)
-    if not result:
-        raise HTTPException(status_code=400, detail="Unable to analyze the selected file.")
-    result["batch_rank"] = 1
-    return [result]
+    if not (os.path.isfile(path) or os.path.isdir(path)):
+        raise HTTPException(status_code=400, detail="File or folder does not exist.")
+
+    job_id = uuid.uuid4().hex
+    _jobs[job_id] = {
+        "status": "running",
+        "progress": "0/1",
+        "current": "",
+        "results": [],
+        "error": None,
+    }
+
+    _job_progress[job_id] = []
+
+    background_tasks.add_task(_run_path_job, job_id, path, fast)
+
+    return {"job_id": job_id}
+
+
+def _run_path_job(job_id: str, path: str, fast: bool):
+    job = _jobs[job_id]
+    results = []
+
+    def emit(msg: str):
+        _job_progress[job_id].append(json.dumps({"msg": msg, "ts": time.time()}))
+
+    emit("Job started")
+
+    if os.path.isdir(path):
+        emit(f"Scanning folder {os.path.basename(path)}...")
+        try:
+            results = scan_folder(path, skip_dovi_scan=fast) or []
+            emit("Scan complete")
+        except Exception as exc:
+            logger.warning("Failed scanning folder %s — %s", path, exc)
+            emit(f"Failed scanning folder: {os.path.basename(path)}")
+    else:
+        # single file path
+        base = os.path.basename(path)
+        emit(f"Analyzing {base}...")
+        try:
+            result = analyze_file(path, skip_dovi_scan=fast)
+            if result:
+                if isinstance(result, list):
+                    results.extend(result)
+                else:
+                    results.append(result)
+                emit(f"Done: {base}")
+        except Exception as exc:
+            logger.warning("Failed analyzing %s — %s", path, exc)
+            emit(f"Failed: {base}")
+
+    job["results"] = rank_results(results)
+    job["status"] = "done"
+    emit("__done__")
 
 
 @app.get("/scan-folder/")
@@ -147,3 +367,34 @@ def scan_folder_api(path: str, fast: bool = Query(False)):
     if not results:
         raise HTTPException(status_code=404, detail="No supported video files found in this folder.")
     return results
+
+
+@app.get("/job/{job_id}")
+def get_job(job_id: str):
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return job
+
+
+@app.get("/job/{job_id}/events")
+async def stream_job_events(job_id: str):
+    import asyncio
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    async def event_gen():
+        seen = 0
+        while True:
+            events = job.get("events", [])
+            while seen < len(events):
+                yield f"data: {json.dumps(events[seen])}\n\n"
+                seen += 1
+            if job["status"] in {"done", "error"}:
+                yield "data: __done__\n\n"
+                return
+            await asyncio.sleep(0.25)
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
