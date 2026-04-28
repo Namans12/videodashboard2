@@ -525,7 +525,7 @@ export default function App() {
                 const msg = pkt.msg ?? pkt.message ?? pkt;
                 const ts = pkt.ts ?? pkt.timestamp ?? "";
                 setProgress(`${msg} ${ts ? ` — ${ts}` : ""}`);
-              } catch (_) {
+              } catch {
                 // ignore malformed SSE messages
               }
             };
@@ -533,7 +533,7 @@ export default function App() {
               es?.close();
               void poll(jobId);
             };
-          } catch (e) {
+          } catch {
             void poll(jobId);
           }
         } else {
