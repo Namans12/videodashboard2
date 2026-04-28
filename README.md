@@ -34,26 +34,6 @@ videodashboard2/
   analysis.py          # Core metadata extraction + scoring logic
 ```
 
-## Screenshots And Demo
-
-Add your product visuals in docs/screenshots and update this section as you capture newer UI states.
-
-Suggested media files:
-
-- docs/screenshots/hero.png
-- docs/screenshots/dashboard.png
-- docs/screenshots/tv-usb-panel.png
-- docs/screenshots/analysis-demo.gif
-
-Markdown example:
-
-```md
-![Hero](docs/screenshots/hero.png)
-![Dashboard](docs/screenshots/dashboard.png)
-![TV and USB Panel](docs/screenshots/tv-usb-panel.png)
-![Demo GIF](docs/screenshots/analysis-demo.gif)
-```
-
 ## Prerequisites
 
 Install these before running:
@@ -171,4 +151,4 @@ npm run lint     # lint frontend code
 
 ## License
 
-Add your preferred license here (MIT, Apache-2.0, etc.).
+![License: MIT]
