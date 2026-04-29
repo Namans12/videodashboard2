@@ -85,20 +85,26 @@ function getToolStatusLabel(status: string) {
 
 // ── Radar chart ──────────────────────────────────────────────────────────────
 function RadarChart({ items, size = 280 }: { items: VideoData[]; size?: number }) {
-  const N    = 5;
-  const cx   = size / 2;
-  const cy   = size / 2;
-  const r    = (size / 2) * 0.65;
+  const N      = 5;
+  const cx     = size / 2;
+  const cy     = size / 2;
+  const r      = (size / 2) * 0.62;
   const labels = ["Quality", "TV Score", "Bitrate", "Audio", "Confidence"];
+  const [animated, setAnimated] = React.useState(false);
+
+  React.useEffect(() => {
+    const t = setTimeout(() => setAnimated(true), 80);
+    return () => clearTimeout(t);
+  }, []);
 
   const angle = (i: number) => (Math.PI * 2 * i) / N - Math.PI / 2;
-  const pt = (i: number, f: number) => ({
+  const pt    = (i: number, f: number) => ({
     x: cx + r * f * Math.cos(angle(i)),
     y: cy + r * f * Math.sin(angle(i)),
   });
   const polyPts = (fracs: number[]) =>
     fracs
-      .map((f, i) => pt(i, Math.min(Math.max(f, 0), 1)))
+      .map((f, i) => pt(i, Math.min(Math.max(animated ? f : 0, 0), 1)))
       .map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`)
       .join(" ");
 
@@ -112,13 +118,28 @@ function RadarChart({ items, size = 280 }: { items: VideoData[]; size?: number }
 
   const gridLevels = [0.25, 0.5, 0.75, 1];
 
+  // Label position nudge so text doesn't clip
+  const labelOffset = (i: number) => {
+    const p = pt(i, 1.32);
+    return { x: p.x, y: p.y };
+  };
+
   return (
     <svg
-      width={size}
-      height={size}
+      width={size} height={size}
       viewBox={`0 0 ${size} ${size}`}
       style={{ overflow: "visible" }}
     >
+      <defs>
+        {FILE_COLORS.map((color, fi) => (
+          <radialGradient key={fi} id={`radar-glow-${fi}`} cx="50%" cy="50%" r="50%">
+            <stop offset="0%"   stopColor={color} stopOpacity="0.35" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.04" />
+          </radialGradient>
+        ))}
+      </defs>
+
+      {/* Grid rings */}
       {gridLevels.map((level) => (
         <polygon
           key={level}
@@ -127,45 +148,61 @@ function RadarChart({ items, size = 280 }: { items: VideoData[]; size?: number }
             return `${p.x.toFixed(2)},${p.y.toFixed(2)}`;
           }).join(" ")}
           fill="none"
-          stroke={`rgba(255,255,255,${level === 1 ? 0.18 : 0.08})`}
-          strokeWidth="1"
+          stroke={level === 1
+            ? "rgba(255,255,255,0.14)"
+            : "rgba(255,255,255,0.06)"}
+          strokeWidth={level === 1 ? 1.5 : 1}
         />
       ))}
 
+      {/* Axis lines */}
       {Array.from({ length: N }, (_, i) => {
         const p = pt(i, 1);
         return (
-          <line
-            key={i}
+          <line key={i}
             x1={cx} y1={cy}
             x2={p.x.toFixed(2)} y2={p.y.toFixed(2)}
-            stroke="rgba(255,255,255,0.1)"
-            strokeWidth="1"
+            stroke="rgba(255,255,255,0.08)" strokeWidth="1"
           />
         );
       })}
 
+      {/* Data polygons — filled + stroked */}
       {items.map((item, fi) => {
         const fracs = normalize(item);
         const color = FILE_COLORS[fi % FILE_COLORS.length];
         return (
           <g key={item.path}>
+            {/* Glow fill */}
             <polygon
               points={polyPts(fracs)}
-              fill={color + "22"}
+              fill={`url(#radar-glow-${fi})`}
+              style={{ transition: "all 0.6s cubic-bezier(0.34,1.56,0.64,1)" }}
+            />
+            {/* Stroke outline */}
+            <polygon
+              points={polyPts(fracs)}
+              fill="none"
               stroke={color}
               strokeWidth="2"
               strokeLinejoin="round"
+              style={{
+                transition: "all 0.6s cubic-bezier(0.34,1.56,0.64,1)",
+                filter: `drop-shadow(0 0 6px ${color}88)`,
+              }}
             />
+            {/* Dots at each vertex */}
             {fracs.map((f, i) => {
-              const p = pt(i, Math.min(Math.max(f, 0), 1));
+              const p = pt(i, Math.min(Math.max(animated ? f : 0, 0), 1));
               return (
-                <circle
-                  key={i}
-                  cx={p.x.toFixed(2)}
-                  cy={p.y.toFixed(2)}
-                  r={4}
-                  fill={color}
+                <circle key={i}
+                  cx={p.x.toFixed(2)} cy={p.y.toFixed(2)}
+                  r={5} fill={color}
+                  stroke="rgba(0,0,0,0.6)" strokeWidth="1.5"
+                  style={{
+                    transition: `all 0.6s cubic-bezier(0.34,1.56,0.64,1) ${i * 40}ms`,
+                    filter: `drop-shadow(0 0 4px ${color})`,
+                  }}
                 />
               );
             })}
@@ -173,29 +210,41 @@ function RadarChart({ items, size = 280 }: { items: VideoData[]; size?: number }
         );
       })}
 
+      {/* Axis labels */}
       {labels.map((label, i) => {
-        const p = pt(i, 1.28);
+        const { x, y } = labelOffset(i);
         return (
-          <text
-            key={i}
-            x={p.x.toFixed(2)}
-            y={p.y.toFixed(2)}
-            textAnchor="middle"
-            dominantBaseline="middle"
+          <text key={i}
+            x={x.toFixed(2)} y={y.toFixed(2)}
+            textAnchor="middle" dominantBaseline="middle"
             fill="rgba(255,255,255,0.6)"
-            fontSize="11"
+            fontSize="10.5"
             fontFamily="'SF Pro Text', Helvetica, sans-serif"
+            fontWeight="500"
+            letterSpacing="0.3"
           >
             {label}
           </text>
         );
       })}
+
+      {/* Center dot */}
+      <circle cx={cx} cy={cy} r={3}
+        fill="rgba(255,255,255,0.15)"
+        stroke="rgba(255,255,255,0.3)" strokeWidth="1"
+      />
     </svg>
   );
 }
 
 // ── Score bar chart ───────────────────────────────────────────────────────────
 function ScoreBarChart({ items }: { items: VideoData[] }) {
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => {
+    const t = setTimeout(() => setMounted(true), 120);
+    return () => clearTimeout(t);
+  }, []);
+
   const metrics: Array<{ key: keyof VideoData; label: string; max: number }> = [
     { key: "score",            label: "Quality",    max: 100 },
     { key: "tv_score",         label: "TV Score",   max: 100 },
@@ -205,13 +254,13 @@ function ScoreBarChart({ items }: { items: VideoData[] }) {
 
   return (
     <div className="score-bar-chart">
-      {metrics.map(({ key, label, max }) => (
+      {metrics.map(({ key, label, max }, mi) => (
         <div key={key} className="sbc-metric">
           <span className="sbc-metric-label">{label}</span>
           <div className="sbc-tracks">
             {items.map((item, fi) => {
-              const val  = (item[key] as number) ?? 0;
-              const pct  = Math.min((val / max) * 100, 100);
+              const val   = (item[key] as number) ?? 0;
+              const pct   = Math.min((val / max) * 100, 100);
               const color = FILE_COLORS[fi % FILE_COLORS.length];
               return (
                 <div key={item.path} className="sbc-track-row">
@@ -219,7 +268,13 @@ function ScoreBarChart({ items }: { items: VideoData[] }) {
                   <div className="sbc-track">
                     <div
                       className="sbc-fill"
-                      style={{ width: `${pct}%`, background: color }}
+                      style={{
+                        width: mounted ? `${pct}%` : "0%",
+                        background: `linear-gradient(90deg, ${color}cc, ${color})`,
+                        boxShadow: mounted ? `0 0 8px ${color}55` : "none",
+                        transition: `width 0.7s cubic-bezier(0.34,1.2,0.64,1) ${(mi * 2 + fi) * 60}ms,
+                                     box-shadow 0.7s ease ${(mi * 2 + fi) * 60}ms`,
+                      }}
                     />
                   </div>
                   <span className="sbc-value" style={{ color }}>
@@ -237,23 +292,60 @@ function ScoreBarChart({ items }: { items: VideoData[] }) {
 
 // ── Bitrate comparison ────────────────────────────────────────────────────────
 function BitrateChart({ items }: { items: VideoData[] }) {
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => {
+    const t = setTimeout(() => setMounted(true), 150);
+    return () => clearTimeout(t);
+  }, []);
+
   const maxBr = Math.max(...items.map((i) => i.bitrate_mbps ?? 0), 1);
+
   return (
     <div className="bitrate-chart">
       {items.map((item, fi) => {
         const pct   = ((item.bitrate_mbps ?? 0) / maxBr) * 100;
         const color = FILE_COLORS[fi % FILE_COLORS.length];
+        const mbps  = (item.bitrate_mbps ?? 0).toFixed(2);
+        // Tier label
+        const tier  = (item.bitrate_mbps ?? 0) > 60 ? "REMUX"
+                    : (item.bitrate_mbps ?? 0) > 30 ? "HIGH"
+                    : (item.bitrate_mbps ?? 0) > 12 ? "MID"
+                    : "LOW";
         return (
           <div key={item.path} className="bc-row">
-            <span className="bc-label" style={{ color }}>
-              {cleanFileName(item.file).length > 22 ? cleanFileName(item.file).slice(0, 22) + "…" : cleanFileName(item.file)}
-            </span>
-            <div className="bc-track">
-              <div className="bc-fill" style={{ width: `${pct}%`, background: color }} />
+            <div className="bc-label-col">
+              <span className="bc-name" style={{ color }}>
+                {item.file.length > 20
+                  ? item.file.slice(0, 20) + "…"
+                  : item.file}
+              </span>
+              <span className="bc-tier" style={{
+                color: tier === "REMUX" ? "#30d158"
+                     : tier === "HIGH"  ? "#ff9f0a"
+                     : tier === "MID"   ? "#2997ff"
+                     : "#ff453a",
+              }}>{tier}</span>
             </div>
-            <span className="bc-value" style={{ color }}>
-              {(item.bitrate_mbps ?? 0).toFixed(2)} Mbps
-            </span>
+            <div className="bc-track">
+              <div
+                className="bc-fill"
+                style={{
+                  width: mounted ? `${pct}%` : "0%",
+                  background: `linear-gradient(90deg, ${color}99, ${color})`,
+                  boxShadow: mounted ? `0 0 10px ${color}44` : "none",
+                  transition: `width 0.75s cubic-bezier(0.34,1.2,0.64,1) ${fi * 80}ms`,
+                }}
+              />
+              {/* Value label inside bar if wide enough */}
+              {pct > 30 && (
+                <span className="bc-fill-label" style={{ color: "rgba(0,0,0,0.8)" }}>
+                  {mbps} Mbps
+                </span>
+              )}
+            </div>
+            {pct <= 30 && (
+              <span className="bc-value" style={{ color }}>{mbps} Mbps</span>
+            )}
           </div>
         );
       })}
@@ -682,6 +774,9 @@ export default function App() {
             </svg>
             <p className="drop-main">Drop video files here</p>
             <p className="drop-sub">MKV · MP4 · TS · M2TS · HEVC · H265</p>
+            <p className="drop-sub" style={{ marginTop: 4, fontSize: 11, opacity: 0.6 }}>
+              For files larger than 4 GB, paste the path below instead
+            </p>
           </div>
 
           {/* ── Selected file list ─────────────────────────────────────── */}
@@ -780,14 +875,14 @@ export default function App() {
             </div>
           </div>
 
-          {jobId && progressMsg && (
-            <div style={{
-              margin: "12px 0 0", padding: "10px 14px",
-              borderRadius: 10, background: "rgba(41,151,255,0.1)",
-              border: "1px solid rgba(41,151,255,0.25)",
-              fontSize: 13, color: "var(--accent-bright)",
-            }}>
-              ⏳ Analyzing: {progressMsg}
+          {/* Progress indicator */}
+          {(jobId && progressMsg) && (
+            <div className="progress-toast">
+              <div className="progress-spinner" />
+              <div className="progress-text">
+                <span className="progress-label">Analyzing</span>
+                <span className="progress-file">{progressMsg}</span>
+              </div>
             </div>
           )}
           <div className="analyze-row">
@@ -860,30 +955,59 @@ export default function App() {
                 {data.map((item, fi) => {
                   const isBest = item.path === bestPath;
                   const color  = FILE_COLORS[fi % FILE_COLORS.length];
+                  const tvPct  = Math.min((item.tv_score ?? 0), 100);
                   return (
-                    <div key={item.path} className={`lb-row ${isBest ? "lb-best" : ""}`}>
-                      <span className="lb-rank" style={{ color }}># {item.batch_rank ?? fi + 1}</span>
+                    <div key={item.path}
+                      className={`lb-row ${isBest ? "lb-best" : ""}`}
+                      style={{ animationDelay: `${fi * 80}ms` }}
+                    >
+                      {/* Rank ring */}
+                      <div className="lb-rank-ring">
+                        <svg width="44" height="44" viewBox="0 0 44 44">
+                          <circle cx="22" cy="22" r="18"
+                            fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="3" />
+                          <circle cx="22" cy="22" r="18"
+                            fill="none" stroke={color} strokeWidth="3"
+                            strokeDasharray={`${(tvPct / 100) * 113} 113`}
+                            strokeLinecap="round"
+                            transform="rotate(-90 22 22)"
+                            style={{ filter: `drop-shadow(0 0 4px ${color}88)` }}
+                          />
+                          <text x="22" y="22"
+                            textAnchor="middle" dominantBaseline="central"
+                            fill={color} fontSize="12" fontWeight="700"
+                          >
+                            #{fi + 1}
+                          </text>
+                        </svg>
+                      </div>
+
                       <div className="lb-file">
-                        <p className="lb-name">{cleanFileName(item.file)}</p>
+                        <p className="lb-name">
+                          {item.file.replace(/^[0-9a-f]{32}_/i, "")}
+                        </p>
                         <p className="lb-meta">
                           DV {item.dv_profile} · {item.source} · {(item.bitrate_mbps ?? 0).toFixed(1)} Mbps
                         </p>
                       </div>
+
                       <div className="lb-scores">
-                        <span
-                          className="lb-score-tv"
-                          style={{ color }}
-                          title="TV Score: calibrated for Sony Bravia 8 Mark II USB playback. 80+ = Excellent, 65+ = Very Good, 50+ = Good."
-                        >
-                          TV {item.tv_score ?? "–"}
+                        <div className="lb-score-block">
+                          <span className="lb-score-val" style={{ color }}>
+                            {item.tv_score ?? "–"}
+                          </span>
+                          <span className="lb-score-tag">TV</span>
+                        </div>
+                        <div className="lb-score-block">
+                          <span className="lb-score-val" style={{ color: "rgba(255,255,255,0.7)" }}>
+                            {item.score}
+                          </span>
+                          <span className="lb-score-tag">Q</span>
+                        </div>
+                        <span className={`lb-verdict lb-verdict-${isBest ? "best" : "ok"}`}
+                          style={isBest ? { background: color + "22", color, borderColor: color + "55" } : {}}>
+                          {getVerdict(item, isBest)}
                         </span>
-                        <span
-                          className="lb-score-q"
-                          title="Quality Score: overall source fidelity independent of TV. Considers DV profile, bitrate, bit depth, audio, source type."
-                        >
-                          Q {item.score}
-                        </span>
-                        <span className="lb-verdict">{getVerdict(item, isBest)}</span>
                       </div>
                     </div>
                   );
