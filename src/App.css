@@ -584,7 +584,13 @@ html[data-theme="light"] .tool-card,
 .tool-detail-list { margin: 12px 0 0; padding-left: 16px; display: grid; gap: 6px; color: var(--soft-text); font-size: 12px; line-height: 1.5; }
 
 /* ── Info sections ───────────────────────────────────────────────────────────── */
-.info-section { padding: 68px 24px; scroll-margin-top: 80px; }
+/* .info-section { padding: 68px 24px; scroll-margin-top: 80px; } */
+.hero-section,
+.dashboard-section,
+.tv-usb-section,
+.info-section {
+  scroll-margin-top: 38px;
+}
 .info-section-light { background: var(--section-light); color: var(--section-light-text); }
 .info-section-dark  { background: var(--section-dark);  color: #fff; }
 .info-copy h2 { margin: 0; font-size: 38px; font-weight: 600; line-height: 1.1; }
