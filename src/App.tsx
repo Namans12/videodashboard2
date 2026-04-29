@@ -17,9 +17,9 @@ const VIDEO_EXTS = [".mkv", ".mp4", ".ts", ".m2ts", ".hevc", ".h265"];
 const API = "http://127.0.0.1:8000";
 
 const DV_HIERARCHY = [
-  { label: "Profile 7 FEL", verdict: "Best",    cls: "r1", notes: "Full dual-layer DV with BL, EL, and RPU — closest to studio master." },
-  { label: "Profile 7 MEL", verdict: "Excellent", cls: "r2", notes: "Dual-layer DV with reduced EL data — still disc-grade." },
-  { label: "Profile 8.1",   verdict: "Very Good", cls: "r3", notes: "Single-layer DV, HDR10-compat base — best native target for Bravia 8 II." },
+  { label: "Profile 7 FEL", verdict: "Best Source",    cls: "r1", notes: "Full dual-layer DV — but EL is WASTED on Bravia 8 II. Convert to P8.1 MP4 for this TV." },
+  { label: "Profile 7 MEL", verdict: "Excellent", cls: "r2", notes: "Thin EL stub — RPU accessible via Just Player on some Sony TVs. Better than FEL for this TV." },
+  { label: "Profile 8.1",   verdict: "Best for TV", cls: "r3", notes: "Single-layer DV, HDR10-compat base — 100% utilized on Bravia 8 II. Ideal target in MP4." },
   { label: "Profile 8.4",   verdict: "Very Good", cls: "r3", notes: "Single-layer DV on HLG base." },
   { label: "Profile 5",     verdict: "Very Good", cls: "r3", notes: "Single-layer streaming DV — no HDR10 fallback." },
   { label: "Profile 8.2",   verdict: "Good",      cls: "r5", notes: "Single-layer DV, SDR-compat base." },
@@ -27,7 +27,7 @@ const DV_HIERARCHY = [
 ];
 
 const HDR_HIERARCHY = [
-  { label: "HDR10+", verdict: "Very Good", cls: "r7",  notes: "Dynamic metadata HDR." },
+  { label: "HDR10+", verdict: "Falls to HDR10", cls: "r9", notes: "Sony Bravia does not support HDR10+. File plays as HDR10 — no dynamic metadata benefit on this TV." },
   { label: "HDR10",  verdict: "Decent",    cls: "r9",  notes: "Static metadata HDR." },
   { label: "HLG",    verdict: "Basic",     cls: "r10", notes: "Broadcast HDR." },
   { label: "SDR",    verdict: "Worst",     cls: "r11", notes: "No HDR." },
@@ -37,6 +37,28 @@ const FILE_COLORS = ["#ffd700", "#2997ff", "#30d158", "#ff9f0a", "#bf5af2"];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 // Helper removed — no longer used after unifying analysis flow.
+
+function cleanFileName(name: string): string {
+  return name.replace(/^[0-9a-f]{32}_/i, "");
+}
+
+class ResultErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <div className="error-box">A result card failed to render — other results are unaffected.</div>;
+    }
+    return this.props.children;
+  }
+}
 
 function scoreColor(score: number) {
   if (score >= 70) return "#30d158";
@@ -224,7 +246,7 @@ function BitrateChart({ items }: { items: VideoData[] }) {
         return (
           <div key={item.path} className="bc-row">
             <span className="bc-label" style={{ color }}>
-              {item.file.length > 22 ? item.file.slice(0, 22) + "…" : item.file}
+              {cleanFileName(item.file).length > 22 ? cleanFileName(item.file).slice(0, 22) + "…" : cleanFileName(item.file)}
             </span>
             <div className="bc-track">
               <div className="bc-fill" style={{ width: `${pct}%`, background: color }} />
@@ -273,7 +295,7 @@ function TVPanel({ items }: { items: VideoData[] }) {
               <span className="tv-dv-label">{row.label}</span>
               {matchedFiles.length > 0 && (
                 <span className="tv-dv-match">
-                  ← {matchedFiles.map((f) => f.file.split(".")[0]).join(", ")}
+                  ← {matchedFiles.map((f) => cleanFileName(f.file).split(".")[0]).join(", ")}
                 </span>
               )}
             </div>
@@ -291,7 +313,7 @@ function TVPanel({ items }: { items: VideoData[] }) {
               />
               <div>
                 <p className="tv-sc-file">
-                  {item.file.length > 20 ? item.file.slice(0, 20) + "…" : item.file}
+                  {cleanFileName(item.file).length > 20 ? cleanFileName(item.file).slice(0, 20) + "…" : cleanFileName(item.file)}
                 </p>
                 <p
                   className="tv-sc-score"
@@ -358,7 +380,7 @@ function USBPanel({ items }: { items: VideoData[] }) {
                 style={{ background: FILE_COLORS[fi % FILE_COLORS.length] }}
               />
               <div className="usb-file-info">
-                <p className="usb-file-name">{item.file}</p>
+                <p className="usb-file-name">{cleanFileName(item.file)}</p>
                 <p className="usb-file-status">
                   {item.usb_compatible
                     ? "✓ Compatible with USB playback"
@@ -398,7 +420,7 @@ function FileLegend({ items }: { items: VideoData[] }) {
         <div key={item.path} className="legend-item">
           <span className="legend-dot" style={{ background: FILE_COLORS[fi % FILE_COLORS.length] }} />
           <span className="legend-name">
-            {item.file.length > 28 ? item.file.slice(0, 28) + "…" : item.file}
+            {cleanFileName(item.file).length > 28 ? cleanFileName(item.file).slice(0, 28) + "…" : cleanFileName(item.file)}
           </span>
           <span className="legend-rank">#{item.batch_rank ?? fi + 1}</span>
         </div>
@@ -410,7 +432,14 @@ function FileLegend({ items }: { items: VideoData[] }) {
 // ── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [path,             setPath]             = useState("");
-  const [data,             setData]             = useState<VideoData[]>([]);
+  const [data,             setData]             = useState<VideoData[]>(() => {
+    try {
+      const saved = localStorage.getItem("last_results");
+      return saved ? JSON.parse(saved) as VideoData[] : [];
+    } catch {
+      return [];
+    }
+  });
   const [error,            setError]            = useState("");
   const [isLoading,        setIsLoading]        = useState(false);
   const [selectedFiles,    setSelectedFiles]    = useState<File[]>([]);
@@ -422,6 +451,10 @@ export default function App() {
   useEffect(() => {
   localStorage.setItem("theme", isLightMode ? "light" : "dark");
   }, [isLightMode]);
+  useEffect(() => {
+    localStorage.setItem("last_results", JSON.stringify(data));
+  }, [data]);
+  const abortRef = useRef(false);
   const [jobId,       setJobId]       = useState<string | null>(null);
   const [progressMsg, setProgressMsg] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -464,6 +497,7 @@ export default function App() {
 
   // ── Analysis ───────────────────────────────────────────────────────────────
   const analyzeSelection = async () => {
+    abortRef.current = false;
     const trimmedPath = path.trim();
     if (!selectedFiles.length && !trimmedPath) {
       setError("Drag & drop files, choose with Browse, or paste a path.");
@@ -476,6 +510,36 @@ export default function App() {
 
     try {
       let results: VideoData[] = [];
+      let cancelled = false;
+
+      const waitForJob = async (job_id: string) => {
+        await new Promise<void>((resolve, reject) => {
+          const poll = async () => {
+            if (abortRef.current) {
+              cancelled = true;
+              resolve();
+              return;
+            }
+            try {
+              const jobRes = await fetch(`${API}/job/${job_id}`);
+              const job = await jobRes.json() as {
+                status: string; progress: string; current: string;
+                results: VideoData[]; error: string | null;
+              };
+              setProgressMsg(`${job.current || "…"} (${job.progress})`);
+              if (job.status === "done") {
+                results = job.results;
+                resolve();
+              } else if (job.status === "error") {
+                reject(new Error(job.error ?? "Analysis failed."));
+              } else {
+                setTimeout(poll, 600);
+              }
+            } catch (e) { reject(e); }
+          };
+          poll();
+        });
+      };
 
       if (trimmedPath) {
         const res = await fetch(
@@ -487,28 +551,24 @@ export default function App() {
         }
         const { job_id } = await res.json() as { job_id: string };
         setJobId(job_id);
-
-        await new Promise<void>((resolve, reject) => {
-          const poll = async () => {
-            try {
-              const jobRes = await fetch(`${API}/job/${job_id}`);
-              const job = await jobRes.json() as {
-                status: string; progress: string; current: string;
-                results: VideoData[]; error: string | null;
-              };
-              setProgressMsg(`${job.current || "…"} (${job.progress})`);
-              if (job.status === "done") {
-                results = job.results;   // ← actually capture results
-                resolve();
-              } else if (job.status === "error") {
-                reject(new Error(job.error ?? "Analysis failed."));
-              } else {
-                setTimeout(poll, 600);
-              }
-            } catch (e) { reject(e); }
-          };
-          poll();
+        await waitForJob(job_id);
+        setJobId(null);
+        setProgressMsg("");
+      } else if (selectedFiles.length === 1) {
+        const formData = new FormData();
+        formData.append("file", selectedFiles[0]);
+        const res = await fetch(`${API}/analysis/?fast=${fastMode}`, {
+          method: "POST", body: formData,
         });
+        if (!res.ok) {
+          const payload = await res.json().catch(() => ({})) as { detail?: string };
+          const prefix = res.status === 507 ? "🖴 Disk full: "
+                       : res.status === 413 ? "📦 File too large: " : "";
+          throw new Error(prefix + (payload.detail ?? "Single-file analysis failed."));
+        }
+        const { job_id } = await res.json() as { job_id: string; total: number };
+        setJobId(job_id);
+        await waitForJob(job_id);
         setJobId(null);
         setProgressMsg("");
       } else if (selectedFiles.length > 0) {
@@ -525,34 +585,16 @@ export default function App() {
         }
         const { job_id } = await res.json() as { job_id: string; total: number };
         setJobId(job_id);
-
-        // Poll /job/{job_id} every 600ms until done
-        await new Promise<void>((resolve, reject) => {
-          const poll = async () => {
-            try {
-              const jobRes  = await fetch(`${API}/job/${job_id}`);
-              const job     = await jobRes.json() as {
-                status: string; progress: string; current: string;
-                results: VideoData[]; error: string | null;
-              };
-              setProgressMsg(`${job.current || "..."} (${job.progress})`);
-              if (job.status === "done") {
-                results = job.results;
-                resolve();
-              } else if (job.status === "error") {
-                reject(new Error(job.error ?? "Analysis failed."));
-              } else {
-                setTimeout(poll, 600);
-              }
-            } catch (e) { reject(e); }
-          };
-          poll();
-        });
+        await waitForJob(job_id);
         setJobId(null);
         setProgressMsg("");
       }
 
-      results = results
+      if (cancelled) {
+        return;
+      }
+
+      results = (Array.isArray(results) ? results : [])
         .filter(Boolean)
         .sort((a, b) =>
           ((b.tv_score ?? 0) + (b.confidence_score ?? 0)) -
@@ -560,6 +602,7 @@ export default function App() {
           );
 
       setData(results);
+      localStorage.setItem("last_results", JSON.stringify(results));
     } catch (err: unknown) {
       let message = "Analysis failed.";
       if (axios.isAxiosError(err)) {
@@ -580,6 +623,7 @@ export default function App() {
       setError(message);
       setData([]);
     } finally {
+      abortRef.current = false;
       setIsLoading(false);
     }
   };
@@ -756,6 +800,14 @@ export default function App() {
                 ? `Analyze ${selectedFiles.length} Files`
                 : "Analyze"}
             </button>
+            {isLoading && (
+              <button
+                className="secondary-button"
+                onClick={() => { abortRef.current = true; setIsLoading(false); }}
+              >
+                Cancel
+              </button>
+            )}
           </div>
         </div>
       </section>
@@ -798,7 +850,7 @@ export default function App() {
                     <div key={item.path} className={`lb-row ${isBest ? "lb-best" : ""}`}>
                       <span className="lb-rank" style={{ color }}># {item.batch_rank ?? fi + 1}</span>
                       <div className="lb-file">
-                        <p className="lb-name">{item.file}</p>
+                        <p className="lb-name">{cleanFileName(item.file)}</p>
                         <p className="lb-meta">
                           DV {item.dv_profile} · {item.source} · {(item.bitrate_mbps ?? 0).toFixed(1)} Mbps
                         </p>
@@ -864,14 +916,15 @@ export default function App() {
           const tvWidth     = Math.min(item.tv_score ?? 0, 100);
 
           return (
-            <article key={item.path || idx} className={`result-card ${isBest ? "result-card-best" : ""}`}
+            <ResultErrorBoundary key={item.path || idx}>
+            <article className={`result-card ${isBest ? "result-card-best" : ""}`}
               style={{ "--card-accent": color } as React.CSSProperties}>
               <div className="result-header">
                 <div className="result-header-copy">
                   <p className="result-kicker" style={{ color }}>
                     #{item.batch_rank ?? idx + 1} · {item.source}
                   </p>
-                  <h2 className="result-file">{item.file}</h2>
+                  <h2 className="result-file">{cleanFileName(item.file)}</h2>
                   <p className="result-path">{item.path}</p>
                 </div>
 
@@ -903,6 +956,20 @@ export default function App() {
 
               {item.quick_summary  && <div className="summary-line">{item.quick_summary}</div>}
               {item.recommendation && <div className="detail-line">{item.recommendation}</div>}
+              {item.dv_profile === "7" && (
+                <div className="conversion-block">
+                  <p className="fact-kicker">⚙ Conversion for this TV</p>
+                  <code className="conv-cmd">
+                    dovi_tool -m 2 convert --discard -i input.hevc -o bl_rpu.hevc
+                  </code>
+                  <code className="conv-cmd">
+                    mp4muxer -i bl_rpu.hevc --dv-profile 8 --dv-bl-compatible-id 1 -o output.mp4
+                  </code>
+                  <p style={{fontSize: 12, color: "var(--soft-text)", marginTop: 6}}>
+                    Converts P7 → P8.1 MP4. Discards EL (already unused on your TV).
+                  </p>
+                </div>
+              )}
               {item.insights       && <div className="insight-line">{item.insights}</div>}
 
               <div className="result-submeta">
@@ -1006,6 +1073,7 @@ export default function App() {
               </a>
               <div className="meta-line">Verdict: {getVerdict(item, isBest)}</div>
             </article>
+            </ResultErrorBoundary>
           );
         })}
       </div>

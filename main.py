@@ -3,6 +3,7 @@ import shutil
 import os
 import uuid
 import logging
+import threading
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
@@ -26,6 +27,13 @@ MAX_UPLOAD_BYTES = 75 * 1024 * 1024 * 1024    # 75 GB
 MIN_FREE_BYTES   = 20 * 1024 * 1024 * 1024  # 20 GB
 
 _jobs: dict[str, dict] = {}
+
+
+def _cleanup_old_jobs() -> None:
+    """Keep only the 20 most recent completed jobs."""
+    done = [jid for jid, job in _jobs.items() if job["status"] in {"done", "error"}]
+    for jid in done[:-20]:
+        _jobs.pop(jid, None)
 
 def _patch_result_path(result: dict, temp_path: str, orig_name: str) -> None:
     result["file"] = orig_name
@@ -123,6 +131,7 @@ def _run_batch_job(job_id: str, saved_paths: list[str],
         job["status"] = "error"
         job["error"]  = "No files could be analyzed."
         emit("Error: no files could be analysed.")
+    threading.Timer(30.0, _cleanup_old_jobs).start()
 
 
 def save_upload(file: UploadFile) -> tuple[str, str]:
@@ -148,6 +157,17 @@ def save_upload(file: UploadFile) -> tuple[str, str]:
                         status_code=413,
                         detail=f"File too large — max {MAX_UPLOAD_BYTES // (1024*1024)} MB allowed.",
                     )
+                if bytes_written % (50 * 1024 * 1024) == 0:
+                    if shutil.disk_usage(UPLOAD_DIR).free < MIN_FREE_BYTES:
+                        buffer.close()
+                        try:
+                            os.remove(file_path)
+                        except OSError:
+                            pass
+                        raise HTTPException(
+                            status_code=507,
+                            detail="Server ran out of disk space during upload.",
+                        )
                 buffer.write(chunk)
     except HTTPException:
         raise
@@ -200,7 +220,7 @@ def health_check():
 
 
 @app.post("/analysis/")
-async def analyze_video(request: Request, fast: bool = Query(False)):
+async def analyze_video(background_tasks: BackgroundTasks, request: Request, fast: bool = Query(False)):
     content_type = request.headers.get("content-type", "")
     if "multipart/form-data" not in content_type.lower():
         raise HTTPException(status_code=400,
@@ -219,20 +239,37 @@ async def analyze_video(request: Request, fast: bool = Query(False)):
         raise HTTPException(status_code=400, detail="Uploaded file has no filename.")
 
     temp_path, orig_name = save_upload(file)   # type: ignore[arg-type]
-    try:
-        result = analyze_file(temp_path, skip_dovi_scan=fast)
-    finally:
+
+    job_id = uuid.uuid4().hex
+    _jobs[job_id] = {
+        "status": "running", "progress": "0/1",
+        "current": orig_name, "total": 1,
+        "results": [], "error": None, "events": [],
+    }
+
+    def _run_single(jid: str, path: str, name: str, f: bool) -> None:
+        job = _jobs[jid]
+        job["events"].append({"msg": f"Analyzing {name}…", "ts": time.time()})
         try:
-            os.remove(temp_path)
-        except OSError:
-            pass
+            result = analyze_file(path, skip_dovi_scan=f)
+            if result:
+                _patch_result_path(result, path, name)
+                result["batch_rank"] = 1
+                job["results"] = [result]
+            job["status"] = "done"
+            job["events"].append({"msg": f"✓ {name}", "ts": time.time()})
+        except Exception as exc:
+            job["status"] = "error"
+            job["error"] = str(exc)
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            threading.Timer(30.0, _cleanup_old_jobs).start()
 
-    if not result:
-        raise HTTPException(status_code=400, detail="Unable to analyze the selected file.")
-
-    _patch_result_path(result, temp_path, orig_name)
-    result["batch_rank"] = 1
-    return [result]
+    background_tasks.add_task(_run_single, job_id, temp_path, orig_name, fast)
+    return {"job_id": job_id, "total": 1}
 
 
 @app.post("/analyze-multiple/")
@@ -330,6 +367,7 @@ def _run_path_job(job_id: str, path: str, fast: bool) -> None:
     job["results"] = rank_results(results)
     job["status"]  = "done"
     emit("Done.")
+    threading.Timer(30.0, _cleanup_old_jobs).start()
 
 
 @app.get("/scan-folder/")

@@ -23,7 +23,9 @@
   padding-bottom: 64px;
 }
 
-.app-shell.theme-light {
+.app-shell.theme-light,
+html[data-theme="light"] .app-shell,
+.app-shell[data-theme="light"] {
   --page-bg:      #f5f5f7;
   --page-text:    #1d1d1f;
   --muted-text:   rgba(0,0,0,0.8);
@@ -48,6 +50,8 @@
   backdrop-filter: saturate(180%) blur(22px);
   border-bottom: 1px solid rgba(255,255,255,0.08);
 }
+html[data-theme="light"] .top-nav,
+.app-shell[data-theme="light"] .top-nav,
 .theme-light .top-nav {
   background: rgba(255,255,255,0.6);
   border-bottom-color: rgba(0,0,0,0.08);
@@ -127,6 +131,8 @@
   color: var(--soft-text);
   margin-bottom: 18px;
 }
+html[data-theme="light"] .drop-zone,
+.app-shell[data-theme="light"] .drop-zone,
 .theme-light .drop-zone { border-color: rgba(0,0,0,0.15); }
 .drop-zone:hover        { border-color: var(--accent-bright); background: rgba(41,151,255,0.05); }
 .drop-zone-active       { border-color: var(--accent-bright) !important; background: rgba(41,151,255,0.1) !important; }
@@ -318,6 +324,8 @@
   border-radius: 22px;
   padding: 22px;
 }
+html[data-theme="light"] .chart-card,
+.app-shell[data-theme="light"] .chart-card,
 .theme-light .chart-card { background: rgba(255,255,255,0.72); }
 .chart-card h3  { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
 .chart-sub { margin: 0 0 18px; font-size: 13px; color: var(--soft-text); }
@@ -352,6 +360,10 @@
   border-radius: 24px;
   padding: 26px;
 }
+html[data-theme="light"] .tv-panel,
+html[data-theme="light"] .usb-panel,
+.app-shell[data-theme="light"] .tv-panel,
+.app-shell[data-theme="light"] .usb-panel,
 .theme-light .tv-panel,
 .theme-light .usb-panel { background: rgba(255,255,255,0.8); }
 
@@ -498,6 +510,24 @@
 .result-submeta { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 12px; color: var(--soft-text); }
 .summary-line   { margin-top: 12px; font-size: 15px; font-weight: 600; }
 .detail-line    { margin-top: 6px; font-size: 14px; color: var(--muted-text); }
+.conversion-block {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(255,159,10,0.07);
+  border: 1px solid rgba(255,159,10,0.2);
+}
+.conv-cmd {
+  display: block;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: rgba(0,0,0,0.3);
+  border-radius: 8px;
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 12px;
+  color: #ff9f0a;
+  word-break: break-all;
+}
 .insight-line   { margin-top: 6px; font-size: 13px; line-height: 1.47; color: var(--muted-text); }
 .best-badge     { margin-top: 10px; font-size: 14px; }
 .open-link      { display: inline-block; margin-top: 10px; color: var(--accent-bright); font-size: 14px; text-decoration: none; }
@@ -512,6 +542,10 @@
   background: rgba(255,255,255,.04);
   padding: 20px;
 }
+html[data-theme="light"] .fact-panel,
+html[data-theme="light"] .toolchain-section,
+.app-shell[data-theme="light"] .fact-panel,
+.app-shell[data-theme="light"] .toolchain-section,
 .theme-light .fact-panel,
 .theme-light .toolchain-section { border-color: rgba(0,0,0,.08); background: rgba(255,255,255,.72); }
 .fact-panel-head { margin-bottom: 16px; }
@@ -519,6 +553,8 @@
 .fact-kicker { margin: 0; text-transform: uppercase; letter-spacing: .16em; font-size: 11px; color: var(--accent-bright); }
 .fact-list { margin: 0; display: grid; gap: 10px; }
 .fact-row { display: grid; grid-template-columns: minmax(0,160px) minmax(0,1fr); gap: 10px; align-items: start; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.08); }
+html[data-theme="light"] .fact-row,
+.app-shell[data-theme="light"] .fact-row,
 .theme-light .fact-row { border-top-color: rgba(0,0,0,.08); }
 .fact-row:first-child { padding-top: 0; border-top: none; }
 .fact-row dt { color: var(--soft-text); font-size: 13px; }
@@ -528,6 +564,8 @@
 .toolchain-section { margin-top: 16px; }
 .tool-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; }
 .tool-card { border-radius: 18px; padding: 16px; border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.03); }
+html[data-theme="light"] .tool-card,
+.app-shell[data-theme="light"] .tool-card,
 .theme-light .tool-card { border-color: rgba(0,0,0,.08); background: rgba(247,248,252,.88); }
 .tool-card-ok       { box-shadow: inset 0 0 0 1px rgba(74,222,128,.15); }
 .tool-card-partial  { box-shadow: inset 0 0 0 1px rgba(250,204,21,.16); }

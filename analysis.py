@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+import logging
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
@@ -17,6 +18,8 @@ FFMPEG_TIMEOUT_SECONDS    = 45
 DOVI_TIMEOUT_SECONDS      = 35
 FFMPEG_SAMPLE_FRAMES      = 120
 
+logger = logging.getLogger("video-analyzer.analysis")
+
 # ── Sony Bravia 8 Mark II ────────────────────────────────────────────────────
 BRAVIA_8_II: dict[str, Any] = {
     "name": "Sony Bravia 8 Mark II",
@@ -26,13 +29,14 @@ BRAVIA_8_II: dict[str, Any] = {
         "5":    ("Yes",     "Single-layer streaming DV — works great"),
         "8.2":  ("Yes",     "SDR-compat base DV — works"),
         "8.x":  ("Yes",     "Generic Profile 8 — likely works"),
-        "7":    ("Partial", "Dual-layer; TV uses BL+RPU only — EL is not rendered"),
+        "7":    ("Partial", "Dual-layer; TV uses BL+RPU only — EL is not rendered. MEL variant may work in Just Player; FEL always falls back."),
         "4":    ("Limited", "Older dual-layer DV — unreliable"),
         "None": ("No",      "No Dolby Vision detected"),
     },
     "dv_tv_score": {
         "8.1": 35, "8.4": 32, "5": 30, "8.x": 27, "8.2": 25,
-        "7": 28, "4": 15, "None": 0,
+        "7-MEL": 30, "7-FEL": 22, "7": 26,
+        "4": 15, "None": 0,
     },
     "usb_containers": {"MKV", "MP4", "TS", "M2TS"},
     "usb_video":      {"hevc", "h.265", "h265", "avc", "h.264", "h264", "vp9", "av1"},
@@ -511,10 +515,10 @@ def estimate_layer_variant_from_bitrate(file_path: str) -> str | None:
 
 def get_audio_quality_score(label: str, details: str) -> int:
     text = f"{label} {details}".lower()
-    if "truehd" in text:              return 10
-    if "dts-hd" in text or "dts x" in text or "dtsx" in text: return 9
-    if "dts" in text:                 return 7
-    if "eac3" in text or "ddp" in text or "dolby digital plus" in text: return 6
+    if "truehd" in text:              return 5
+    if "eac3" in text or "ddp" in text or "dolby digital plus" in text: return 10
+    if "dts-hd" in text or "dts x" in text or "dtsx" in text: return 7
+    if "dts" in text:                 return 6
     if "ac3" in text or "ac-3" in text or "dolby digital" in text: return 5
     if "pcm" in text or "lpcm" in text: return 6
     if "aac" in text:                 return 3
@@ -578,13 +582,24 @@ def score_for_tv(
     audio_score: int,
     container_short: str,
     source: str,
+    layer_variant: str = "",
+    hdr_summary: str = "",
 ) -> tuple[int, str]:
     """Quality score calibrated for Sony Bravia 8 Mark II direct playback.
 
     Key difference vs score_video: profile 7 scores 28 (not 42) because the
     TV cannot render the EL — source quality is still good, just no EL bonus.
     """
-    score = BRAVIA_8_II["dv_tv_score"].get(base_profile, 10)
+    if base_profile == "7":
+        lv = layer_variant.lower()
+        if lv.startswith("mel"):
+            score = BRAVIA_8_II["dv_tv_score"].get("7-MEL", 30)
+        elif lv.startswith("fel"):
+            score = BRAVIA_8_II["dv_tv_score"].get("7-FEL", 22)
+        else:
+            score = BRAVIA_8_II["dv_tv_score"].get("7", 26)
+    else:
+        score = BRAVIA_8_II["dv_tv_score"].get(base_profile) or 10
 
     if bitrate_mbps > 70:    score += 18
     elif bitrate_mbps > 45:  score += 15
@@ -599,7 +614,8 @@ def score_for_tv(
 
     score += min(audio_score, 10)
 
-    if container_short in {"MKV", "MP4"}:   score += 4
+    if container_short == "MP4":    score += 6
+    elif container_short == "MKV":  score += 3
     elif container_short in {"M2TS", "TS"}: score += 2
 
     source_bonus = {
@@ -644,6 +660,24 @@ def check_usb_compatibility(
 
     if bit_depth and bit_depth > BRAVIA_8_II["max_depth"]:
         issues.append(f"{bit_depth}-bit video exceeds the 10-bit USB maximum on this TV.")
+
+    if container_short == "MKV" and "dolby vision" in video_codec.lower():
+        warnings.append(
+            "DV in MKV can lose DV box atoms during playback — "
+            "MP4 (via mp4muxer) is the safer container for Dolby Vision on this TV."
+        )
+
+    if "truehd" in audio_lower:
+        warnings.append(
+            "TrueHD/Atmos does not decode from USB on this TV — "
+            "playback falls back to the embedded AC3 core (DD 5.1). "
+            "Re-encode audio to E-AC3 Atmos for spatial audio via USB."
+        )
+    if "dts-hd" in audio_lower or "dtshd" in audio_lower:
+        warnings.append(
+            "DTS-HD MA USB support is inconsistent on this TV — "
+            "may fall back to DTS core. Verify playback before copying."
+        )
 
     if "x" in resolution:
         try:
@@ -716,6 +750,7 @@ def score_video(
     base_profile: str, layer_variant: str, bitrate_mbps: float, source: str,
     bit_depth: int | None, audio_score: int, container_short: str,
     tv_support: str, el: str,
+    hdr_summary: str = "",
 ) -> int:
     score = 0
     profile_scores = {"7": 42, "8.1": 30, "5": 26, "8.4": 22, "8.2": 18, "4": 14, "8.x": 20}
@@ -739,7 +774,8 @@ def score_video(
 
     score += min(audio_score, 10)
 
-    if container_short in {"MKV", "MP4"}:   score += 4
+    if container_short == "MP4":    score += 6
+    elif container_short == "MKV":  score += 3
     elif container_short in {"M2TS", "TS"}: score += 2
 
     source_scores = {"REMUX": 10, "UHD BluRay": 8, "BluRay Encode": 5, "WEB-DL": 2}
@@ -824,16 +860,21 @@ def create_ffmpeg_video_sample(file_path: str,
     if not ffmpeg_bin:
         return None, None
     sample_path = make_temp_path(".hevc")
-    result = run_command(
-        [ffmpeg_bin, "-y", "-hwaccel", "cuda", "-v", "error", "-i", file_path,
-         "-map", "0:v:0", "-an", "-sn", "-dn", "-c", "copy",
-         "-frames:v", str(frame_limit), "-f", "hevc", sample_path],
-        timeout=FFMPEG_TIMEOUT_SECONDS,
-    )
-    if command_failed(result):
-        remove_if_exists(sample_path)
-        return None, result
-    return sample_path, result
+    result = None
+    for args_prefix in (
+        [ffmpeg_bin, "-y", "-hwaccel", "cuda", "-v", "error"],
+        [ffmpeg_bin, "-y", "-v", "error"],
+    ):
+        result = run_command(
+            args_prefix + ["-i", file_path, "-map", "0:v:0",
+             "-an", "-sn", "-dn", "-c", "copy",
+             "-frames:v", str(frame_limit), "-f", "hevc", sample_path],
+            timeout=FFMPEG_TIMEOUT_SECONDS,
+        )
+        if not command_failed(result):
+            return sample_path, result
+    remove_if_exists(sample_path)
+    return None, result
 
 
 def parse_dovi_summary(output: str) -> dict[str, Any] | None:
@@ -1097,16 +1138,38 @@ def build_tool_reports(
 def build_recommendation(
     quality_score: int, confidence_score: int, tv_score: int,
     tv_support: dict[str, str], profile_label: str, layer_variant: str,
+    container_short: str = "", audio_label: str = "",
 ) -> str:
     if tv_support["profile_supported"] == "No":
         return "Not a suitable playback target for this TV."
+    recs = []
+
+    if profile_label == "7" and layer_variant.lower().startswith("fel"):
+        recs.append(
+            "⚙ Convert to P8.1: dovi_tool -m 2 convert --discard → mp4muxer. "
+            "FEL is fully wasted on this TV."
+        )
+    elif profile_label == "7" and "mel" in layer_variant.lower():
+        recs.append("⚙ Consider converting to P8.1 MP4 for guaranteed compatibility.")
+
+    if container_short == "MKV":
+        recs.append("⚙ Remux to MP4 with mp4muxer for safer DV playback.")
+
+    if "truehd" in audio_label.lower():
+        recs.append(
+            "🔊 Re-encode audio to E-AC3 Atmos — TrueHD falls back to AC3 core via USB."
+        )
+
     if tv_score >= 80 and confidence_score >= 70:
-        return "Top candidate for your Sony Bravia 8 Mark II."
-    if profile_label in {"8.1", "8.4", "5"}:
-        return "Good native DV candidate for this TV."
-    if profile_label == "7":
-        return "Strong source quality — TV uses BL+RPU only (EL not rendered)."
-    return "Playable, but not the strongest option for this TV."
+        base = "Top candidate for your Sony Bravia 8 Mark II."
+    elif profile_label in {"8.1", "8.4", "5"}:
+        base = "Good native DV candidate for this TV."
+    elif profile_label == "7":
+        base = "Strong source — but EL not rendered by this TV."
+    else:
+        base = "Playable, but not the strongest option for this TV."
+
+    return " | ".join([base] + recs) if recs else base
 
 
 def build_insights(
@@ -1208,6 +1271,7 @@ def analyze_file(filepath: str, skip_dovi_scan: bool = False) -> dict[str, Any] 
         container_short=container_short,
         tv_support=tv_support["profile_supported"],
         el=dv_info["el"],
+        hdr_summary=dv_info["hdr"],
     )
 
     tv_score, tv_label = score_for_tv(
@@ -1217,6 +1281,8 @@ def analyze_file(filepath: str, skip_dovi_scan: bool = False) -> dict[str, Any] 
         audio_score=audio_score,
         container_short=container_short,
         source=source,
+        layer_variant=dv_info["layer_variant"],
+        hdr_summary=dv_info["hdr"],
     )
 
     usb_compat = check_usb_compatibility(
@@ -1245,6 +1311,8 @@ def analyze_file(filepath: str, skip_dovi_scan: bool = False) -> dict[str, Any] 
         tv_support=tv_support,
         profile_label=dv_info["profile"],
         layer_variant=dv_info["layer_variant"],
+        container_short=container_short,
+        audio_label=audio_label,
     )
 
     quick_summary, insights = build_insights(
@@ -1340,9 +1408,13 @@ def scan_folder(folder: str, skip_dovi_scan: bool = False) -> list[dict[str, Any
     with ThreadPoolExecutor(max_workers=min(4, len(file_paths))) as executor:
         future_map = {executor.submit(worker, path): path for path in file_paths}
         for future in as_completed(future_map):
-            result = future.result()
-            if result:
-                results.append(result)
+            path = future_map[future]
+            try:
+                result = future.result()
+                if result:
+                    results.append(result)
+            except Exception as exc:
+                logger.warning("scan_folder: failed on %s — %s", path, exc)
 
     results.sort(
         key=lambda item: (
