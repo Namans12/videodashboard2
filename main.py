@@ -24,7 +24,7 @@ logger = logging.getLogger("video-analyzer.api")
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-MAX_UPLOAD_BYTES = 75 * 1024 * 1024 * 1024    # 75 GB
+MAX_UPLOAD_BYTES = 120 * 1024 * 1024 * 1024    # 120 GB
 MIN_FREE_BYTES   = 20 * 1024 * 1024 * 1024  # 20 GB
 
 _jobs: dict[str, dict] = {}
