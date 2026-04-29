@@ -616,7 +616,9 @@ export default function App() {
         }
       } else if (err instanceof Error) {
         const text = err.message;
-        message = text.includes("507")
+        message = text.includes("path input")
+          ? "📁 " + text   // already has good instructions
+          : text.includes("507")
           ? "🖴 Server disk full — free up space in the uploads/ folder and retry."
           : text;
       }

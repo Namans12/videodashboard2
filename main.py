@@ -150,6 +150,20 @@ def _run_batch_job(job_id: str, saved_paths: list[str],
 
 def save_upload(file: UploadFile) -> tuple[str, str]:
     original_name = os.path.basename(file.filename or "upload.bin")
+    
+    # For large files, tell user to use path input instead
+    # (uvicorn rejects huge uploads before we can even check size)
+    # This message shows for files where content-length header is present
+    content_length = getattr(file, 'size', None)
+    if content_length and content_length > 10 * 1024 * 1024 * 1024:  # 10 GB
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"File too large to upload ({content_length // (1024**3):.0f} GB). "
+                "Use the path input instead — paste the full file path or folder path "
+                "directly into the text box. No upload needed for local files."
+            )
+        )
     unique_name   = f"{uuid.uuid4().hex}_{original_name}"
     file_path     = os.path.join(UPLOAD_DIR, unique_name)
     bytes_written = 0
