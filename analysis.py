@@ -6,16 +6,17 @@ import shutil
 import subprocess
 import logging
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 from typing import Any
 
 VIDEO_EXTENSIONS = (".mkv", ".mp4", ".ts", ".m2ts", ".hevc", ".h265")
 
-MEDIAINFO_TIMEOUT_SECONDS = 25
-FFPROBE_TIMEOUT_SECONDS   = 25
-FFMPEG_TIMEOUT_SECONDS    = 45
-DOVI_TIMEOUT_SECONDS      = 35
+MEDIAINFO_TIMEOUT_SECONDS = 90
+FFPROBE_TIMEOUT_SECONDS   = 90
+FFMPEG_TIMEOUT_SECONDS    = 120
+DOVI_TIMEOUT_SECONDS      = 60
 FFMPEG_SAMPLE_FRAMES      = 120
 
 logger = logging.getLogger("video-analyzer.analysis")
@@ -381,6 +382,8 @@ def get_bitrate_mbps(
     video_track: dict[str, Any] | None,
     ffprobe_video: dict[str, Any] | None,
     ffprobe_data: dict[str, Any] | None = None,   # ← FIX: container fallback
+    file_size_gb: float | None = None,
+    duration_min: float | None = None,
 ) -> float:
     candidates: list[Any] = []
     if video_track:
@@ -397,6 +400,12 @@ def get_bitrate_mbps(
         value = coerce_float(ffprobe_data.get("format", {}).get("bit_rate"))
         if value and value > 1_000:
             return round(value / 1_000_000, 2)
+    # NEW: derive from file size + duration as last resort
+    if file_size_gb and duration_min and duration_min > 0:
+        # rough estimate: assume ~85% of file is video
+        estimated = (file_size_gb * 1_000_000_000 * 0.85 * 8) / (duration_min * 60) / 1_000_000
+        if estimated > 0.5:
+            return round(estimated, 2)
     return 0.0
 
 
@@ -563,13 +572,18 @@ def get_primary_audio_summary(
 def guess_source(file_name: str, bitrate_mbps: float, base_profile: str, el: str) -> str:
     name = file_name.lower()
     if "remux" in name:                                            return "REMUX"
-    if "uhd" in name and "bluray" in name:                         return "UHD BluRay"
-    if "bluray" in name or "bdremux" in name or "bdrip" in name:  return "BluRay Encode"
-    if "web-dl" in name or "webrip" in name or "amzn" in name or "netflix" in name:
+    if "uhd" in name and ("bluray" in name or "blu-ray" in name):  return "UHD BluRay"
+    if "bluray" in name or "blu-ray" in name or "bdremux" in name or "bdrip" in name:
+        return "BluRay Encode"
+    if any(x in name for x in ("amzn", "amazon", "nf", "netflix",
+                                "dsnp", "disney", "hmax", "hulu",
+                                "atvp", "appletv", "pcok", "peacock",
+                                "pmtp", "paramount", "web-dl", "webrip")):
         return "WEB-DL"
     if base_profile == "7" and el == "Yes": return "Likely BluRay"
     if bitrate_mbps > 60:                   return "Likely REMUX"
     if bitrate_mbps > 30:                   return "High Encode"
+    if bitrate_mbps > 15:                   return "WEB/Encode"
     return "WEB/Compressed"
 
 
@@ -1207,6 +1221,28 @@ def build_insights(
 # ── Main analysis entry point ────────────────────────────────────────────────
 
 def analyze_file(filepath: str, skip_dovi_scan: bool = False) -> dict[str, Any] | None:
+    """Wrapper with timeout protection (6 min max per file)."""
+    result_holder = [None]
+    error_holder  = [None]
+
+    def _run():
+        try:
+            result_holder[0] = _analyze_file_inner(filepath, skip_dovi_scan)
+        except Exception as e:
+            error_holder[0] = e
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=360)  # 6 min max per file
+    if t.is_alive():
+        logger.warning("analyze_file timed out for %s", filepath)
+        return None
+    if error_holder[0]:
+        raise error_holder[0]
+    return result_holder[0]
+
+
+def _analyze_file_inner(filepath: str, skip_dovi_scan: bool = False) -> dict[str, Any] | None:
     mediainfo_data, ffprobe_data = probe_metadata(filepath)
 
     if not mediainfo_data and not ffprobe_data:
@@ -1240,10 +1276,12 @@ def analyze_file(filepath: str, skip_dovi_scan: bool = False) -> dict[str, Any] 
     dv_info        = inspect_dolby_vision(filepath, video_track, ffprobe_video, dovi_scan)
     container_name = get_container_name(general_track, ffprobe_data)
     container_short = get_container_short_name(container_name)
-    bitrate_mbps   = get_bitrate_mbps(video_track, ffprobe_video, ffprobe_data)  # FIX: pass ffprobe_data
+    file_size_gb   = get_file_size_gb(general_track, ffprobe_data)
+    duration_minutes = get_duration_minutes(general_track, ffprobe_data)
+    bitrate_mbps   = get_bitrate_mbps(video_track, ffprobe_video, ffprobe_data,
+                                       file_size_gb=file_size_gb, duration_min=duration_minutes)
     bit_depth      = get_bit_depth(video_track, ffprobe_video)
     resolution     = get_resolution(video_track, ffprobe_video)
-    file_size_gb   = get_file_size_gb(general_track, ffprobe_data)
 
     audio_label, audio_details, audio_score = get_primary_audio_summary(
         mediainfo_audio_tracks, ffprobe_audio_streams

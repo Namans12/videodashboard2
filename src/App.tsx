@@ -836,6 +836,18 @@ export default function App() {
               <p className="dash-sub">
                 Ranked by TV score for Sony Bravia 8 Mark II USB playback
               </p>
+              <button
+                className="secondary-button"
+                style={{ marginLeft: "auto" }}
+                onClick={() => {
+                  setData([]);
+                  // selectedFiles are still in state — just re-run
+                  void analyzeSelection();
+                }}
+                disabled={isLoading || (!selectedFiles.length && !path)}
+              >
+                ↺ Re-analyze
+              </button>
             </div>
 
             <FileLegend items={data} />
@@ -856,10 +868,19 @@ export default function App() {
                         </p>
                       </div>
                       <div className="lb-scores">
-                        <span className="lb-score-tv" style={{ color }}>
+                        <span
+                          className="lb-score-tv"
+                          style={{ color }}
+                          title="TV Score: calibrated for Sony Bravia 8 Mark II USB playback. 80+ = Excellent, 65+ = Very Good, 50+ = Good."
+                        >
                           TV {item.tv_score ?? "–"}
                         </span>
-                        <span className="lb-score-q">Q {item.score}</span>
+                        <span
+                          className="lb-score-q"
+                          title="Quality Score: overall source fidelity independent of TV. Considers DV profile, bitrate, bit depth, audio, source type."
+                        >
+                          Q {item.score}
+                        </span>
                         <span className="lb-verdict">{getVerdict(item, isBest)}</span>
                       </div>
                     </div>
@@ -930,11 +951,19 @@ export default function App() {
 
                 <div className="score-panel" style={{ borderColor: color + "44" }}>
                   <span className="score-label">Quality</span>
-                  <span className="score-value" style={{ color: scoreColor(item.score) }}>
+                  <span
+                    className="score-value"
+                    style={{ color: scoreColor(item.score) }}
+                    title="Quality Score: overall source fidelity independent of TV. Considers DV profile, bitrate, bit depth, audio, source type."
+                  >
                     {item.score}
                   </span>
                   <span className="score-label" style={{ marginTop: 6 }}>TV Score</span>
-                  <span className="score-tv" style={{ color }}>
+                  <span
+                    className="score-tv"
+                    style={{ color }}
+                    title="TV Score: calibrated for Sony Bravia 8 Mark II USB playback. 80+ = Excellent, 65+ = Very Good, 50+ = Good."
+                  >
                     {item.tv_score ?? "–"}
                   </span>
                   <span className="meta-line">Conf. {item.confidence_score ?? 0}/100</span>

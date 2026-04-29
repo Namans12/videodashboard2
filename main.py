@@ -12,7 +12,8 @@ import time
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.datastructures import UploadFile as StarletteUploadFile
-from fastapi.responses import StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi.responses import StreamingResponse, JSONResponse
 import asyncio
 import json
 
@@ -54,6 +55,19 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Video Metadata Analyzer", lifespan=lifespan)
+
+class MaxBodySizeMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        if request.method == "POST":
+            content_length = request.headers.get("content-length")
+            if content_length and int(content_length) > MAX_UPLOAD_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": f"Request too large — max {MAX_UPLOAD_BYTES // (1024**3)} GB."}
+                )
+        return await call_next(request)
+
+app.add_middleware(MaxBodySizeMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -343,8 +357,34 @@ def _run_path_job(job_id: str, path: str, fast: bool) -> None:
     if os.path.isdir(path):
         emit(f"Scanning folder: {os.path.basename(path)}…")
         try:
-            results = scan_folder(path, skip_dovi_scan=fast) or []
-            emit(f"Scan complete — {len(results)} file(s) found.")
+            file_paths = []
+            for root, _, files in os.walk(path):
+                for f in files:
+                    if f.lower().endswith((".mkv", ".mp4", ".ts", ".m2ts", ".hevc", ".h265")):
+                        file_paths.append(os.path.join(root, f))
+            
+            job["total"] = len(file_paths)
+            worker = partial(analyze_file, skip_dovi_scan=fast)
+            
+            with ThreadPoolExecutor(max_workers=min(4, len(file_paths))) as executor:
+                future_map = {executor.submit(worker, p): p for p in file_paths}
+                done = 0
+                for future in as_completed(future_map):
+                    p = future_map[future]
+                    job["current"] = os.path.basename(p)
+                    try:
+                        result = future.result()
+                        if result:
+                            results.append(result)
+                            emit(f"✓ {os.path.basename(p)}")
+                        else:
+                            emit(f"✗ {os.path.basename(p)} — no data")
+                    except Exception as exc:
+                        logger.warning("scan_folder: failed on %s — %s", p, exc)
+                        emit(f"✗ {os.path.basename(p)} — {exc}")
+                    finally:
+                        done += 1
+                        job["progress"] = f"{done}/{len(file_paths)}"
         except Exception as exc:
             logger.warning("Failed scanning folder %s — %s", path, exc)
             job["error"] = str(exc)
