@@ -422,7 +422,6 @@ export default function App() {
   useEffect(() => {
   localStorage.setItem("theme", isLightMode ? "light" : "dark");
   }, [isLightMode]);
-  const [progress,         setProgress]         = useState("");
   const [jobId,       setJobId]       = useState<string | null>(null);
   const [progressMsg, setProgressMsg] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -479,68 +478,39 @@ export default function App() {
       let results: VideoData[] = [];
 
       if (trimmedPath) {
-        // Use background job + SSE for pasted paths as well (file or folder on server).
         const res = await fetch(
           `${API}/analyze-path/?path=${encodeURIComponent(trimmedPath)}&fast=${fastMode}`
         );
         if (!res.ok) {
           const payload = await res.json().catch(() => ({})) as { detail?: string };
-          const prefix = res.status === 507 ? "🖴 Disk full: " : "";
-          throw new Error(prefix + (payload.detail ?? "Analysis request failed."));
+          throw new Error(payload.detail ?? "Analysis request failed.");
         }
+        const { job_id } = await res.json() as { job_id: string };
+        setJobId(job_id);
 
-        const payload = await res.json().catch(() => ({})) as { job_id?: string };
-        const jobId = payload.job_id as string | undefined;
-        if (!jobId) throw new Error("No job_id returned from server.");
-
-        setProgress("Queued");
-
-        const poll = async (jobId: string) => {
-          const r = await fetch(`${API}/job/${jobId}`);
-          const job = await r.json();
-
-          setProgress(`${job.current} — ${job.progress}`);
-
-          if (job.status === "done") {
-            setData(job.results);
-            setIsLoading(false);
-          } else {
-            setTimeout(() => void poll(jobId), 600);
-          }
-        };
-
-        // Try SSE first, fall back to polling if unavailable or on error.
-        if (typeof EventSource !== "undefined") {
-          let es: EventSource | null = null;
-          try {
-            es = new EventSource(`${API}/progress/${jobId}`);
-            es.onmessage = (ev) => {
-              try {
-                const pkt = JSON.parse(ev.data as string);
-                if (pkt === "__done__" || pkt.msg === "__done__") {
-                  es?.close();
-                  void poll(jobId);
-                  return;
-                }
-                const msg = pkt.msg ?? pkt.message ?? pkt;
-                const ts = pkt.ts ?? pkt.timestamp ?? "";
-                setProgress(`${msg} ${ts ? ` — ${ts}` : ""}`);
-              } catch {
-                // ignore malformed SSE messages
+        await new Promise<void>((resolve, reject) => {
+          const poll = async () => {
+            try {
+              const jobRes = await fetch(`${API}/job/${job_id}`);
+              const job = await jobRes.json() as {
+                status: string; progress: string; current: string;
+                results: VideoData[]; error: string | null;
+              };
+              setProgressMsg(`${job.current || "…"} (${job.progress})`);
+              if (job.status === "done") {
+                results = job.results;   // ← actually capture results
+                resolve();
+              } else if (job.status === "error") {
+                reject(new Error(job.error ?? "Analysis failed."));
+              } else {
+                setTimeout(poll, 600);
               }
-            };
-            es.onerror = () => {
-              es?.close();
-              void poll(jobId);
-            };
-          } catch {
-            void poll(jobId);
-          }
-        } else {
-          void poll(jobId);
-        }
-
-        results = [];
+            } catch (e) { reject(e); }
+          };
+          poll();
+        });
+        setJobId(null);
+        setProgressMsg("");
       } else if (selectedFiles.length > 0) {
         const formData = new FormData();
         selectedFiles.forEach((f) => formData.append("files", f));
@@ -580,8 +550,6 @@ export default function App() {
         });
         setJobId(null);
         setProgressMsg("");
-
-        results = [];
       }
 
       results = results
@@ -802,7 +770,6 @@ export default function App() {
       />
 
       {error && <div className="error-box">{error}</div>}
-      {progress && <div className="error-box">{progress}</div>}
 
       {/* ── Dashboard ───────────────────────────────────────────────────── */}
       {showDashboard && (

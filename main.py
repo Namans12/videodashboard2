@@ -26,7 +26,6 @@ MAX_UPLOAD_BYTES = 75 * 1024 * 1024 * 1024    # 75 GB
 MIN_FREE_BYTES   = 20 * 1024 * 1024 * 1024  # 20 GB
 
 _jobs: dict[str, dict] = {}
-_job_progress: dict[str, list[str]] = {}
 
 def _patch_result_path(result: dict, temp_path: str, orig_name: str) -> None:
     result["file"] = orig_name
@@ -270,31 +269,6 @@ async def analyze_multiple(
     return {"job_id": job_id, "total": len(saved_paths)}
 
 
-@app.get("/progress/{job_id}")
-async def stream_progress(job_id: str):
-    async def event_stream():
-        seen = 0
-        while True:
-            events = _job_progress.get(job_id, [])
-            while seen < len(events):
-                yield f"data: {events[seen]}\n\n"
-                seen += 1
-                # Check if the last event is the done sentinel
-                try:
-                    last_event = json.loads(events[seen - 1])
-                    if last_event.get("msg") == "__done__":
-                        return
-                except (json.JSONDecodeError, AttributeError):
-                    pass
-            await asyncio.sleep(0.2)
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
 @app.get("/analyze-path/")
 def analyze_video_path(background_tasks: BackgroundTasks, path: str, fast: bool = Query(False)):
     """Accept a server-local file or folder path and run analysis as a background job.
@@ -309,53 +283,53 @@ def analyze_video_path(background_tasks: BackgroundTasks, path: str, fast: bool 
         "status": "running",
         "progress": "0/1",
         "current": "",
+        "total": 1,
         "results": [],
         "error": None,
+        "events": [],
     }
-
-    _job_progress[job_id] = []
 
     background_tasks.add_task(_run_path_job, job_id, path, fast)
 
     return {"job_id": job_id}
 
 
-def _run_path_job(job_id: str, path: str, fast: bool):
+def _run_path_job(job_id: str, path: str, fast: bool) -> None:
     job = _jobs[job_id]
-    results = []
 
-    def emit(msg: str):
-        _job_progress[job_id].append(json.dumps({"msg": msg, "ts": time.time()}))
+    def emit(msg: str) -> None:
+        job["events"].append({"msg": msg, "ts": time.time()})
 
     emit("Job started")
 
+    results = []
     if os.path.isdir(path):
-        emit(f"Scanning folder {os.path.basename(path)}...")
+        emit(f"Scanning folder: {os.path.basename(path)}…")
         try:
             results = scan_folder(path, skip_dovi_scan=fast) or []
-            emit("Scan complete")
+            emit(f"Scan complete — {len(results)} file(s) found.")
         except Exception as exc:
             logger.warning("Failed scanning folder %s — %s", path, exc)
-            emit(f"Failed scanning folder: {os.path.basename(path)}")
+            job["error"] = str(exc)
+            emit(f"Error scanning folder: {exc}")
     else:
-        # single file path
         base = os.path.basename(path)
-        emit(f"Analyzing {base}...")
+        emit(f"Analyzing {base}…")
         try:
             result = analyze_file(path, skip_dovi_scan=fast)
             if result:
-                if isinstance(result, list):
-                    results.extend(result)
-                else:
-                    results.append(result)
-                emit(f"Done: {base}")
+                results.append(result)
+                emit(f"✓ {base}")
+            else:
+                emit(f"✗ {base} — no data extracted")
         except Exception as exc:
             logger.warning("Failed analyzing %s — %s", path, exc)
-            emit(f"Failed: {base}")
+            job["error"] = str(exc)
+            emit(f"Error: {exc}")
 
     job["results"] = rank_results(results)
-    job["status"] = "done"
-    emit("__done__")
+    job["status"]  = "done"
+    emit("Done.")
 
 
 @app.get("/scan-folder/")
