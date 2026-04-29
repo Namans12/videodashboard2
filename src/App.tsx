@@ -838,7 +838,7 @@ export default function App() {
               </p>
               <button
                 className="secondary-button"
-                style={{ marginLeft: "auto" }}
+                style={{ marginLeft: "auto", marginTop: "12px" }}
                 onClick={() => {
                   setData([]);
                   // selectedFiles are still in state — just re-run
