@@ -12,8 +12,8 @@ export default function Switch({ isLightMode, setIsLightMode }: Props) {
       <input
         type="checkbox"
         className="theme-switch__checkbox"
-        checked={isLightMode}
-        onChange={(e) => setIsLightMode(e.target.checked)}
+        checked={!isLightMode}
+        onChange={(e) => setIsLightMode(!e.target.checked)}
       />
       <div className="theme-switch__container">
         <div className="theme-switch__clouds"></div>

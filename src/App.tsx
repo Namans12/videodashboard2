@@ -143,6 +143,7 @@ function RadarChart({ items, size = 280 }: { items: VideoData[]; size?: number }
       {gridLevels.map((level) => (
         <polygon
           key={level}
+          className="radar-grid-ring"
           points={Array.from({ length: N }, (_, i) => {
             const p = pt(i, level);
             return `${p.x.toFixed(2)},${p.y.toFixed(2)}`;
@@ -182,6 +183,7 @@ function RadarChart({ items, size = 280 }: { items: VideoData[]; size?: number }
             {/* Stroke outline */}
             <polygon
               points={polyPts(fracs)}
+              className="radar-data-outline"
               fill="none"
               stroke={color}
               strokeWidth="2"
@@ -386,8 +388,18 @@ function TVPanel({ items }: { items: VideoData[] }) {
               </span>
               <span className="tv-dv-label">{row.label}</span>
               {matchedFiles.length > 0 && (
-                <span className="tv-dv-match">
-                  ← {matchedFiles.map((f) => cleanFileName(f.file).split(".")[0]).join(", ")}
+                <span className="tv-dv-match-list">
+                  {matchedFiles.map((f, fileIndex) => {
+                    const color = FILE_COLORS[items.findIndex((item) => item.path === f.path) % FILE_COLORS.length];
+                    const name = cleanFileName(f.file).replace(/\.[^.]+$/, "");
+                    const visibleName = name.length > 28 ? name.slice(0, 28) + "…" : name;
+                    return (
+                      <span key={f.path} className="tv-dv-match-chip" style={{ borderColor: color + "66", background: color + "14", color }}>
+                        <span className="tv-dv-chip-dot" style={{ background: color }} />
+                        <span className="tv-dv-chip-name">{fileIndex === 0 ? "← " : ""}{visibleName}</span>
+                      </span>
+                    );
+                  })}
                 </span>
               )}
             </div>

@@ -392,20 +392,47 @@ html[data-theme="light"] .usb-panel,
 .support-badge-limited { color: #ff6b6b; font-weight: 700; font-size: 12px; }
 .support-badge-no      { color: var(--soft-text); font-weight: 700; font-size: 12px; }
 .tv-dv-label  { color: var(--soft-text); }
-.tv-dv-match  { color: var(--accent-bright); font-size: 12px; font-weight: 600; }
+.tv-dv-match-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 6px;
+}
+.tv-dv-match-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.tv-dv-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.tv-dv-chip-name {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* TV per-file scores */
 .tv-scores-row { display: flex; flex-direction: column; gap: 12px; }
 .tv-score-chip {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   padding: 12px;
   border-radius: 14px;
   background: rgba(255,255,255,0.04);
   border: 1px solid var(--panel-border);
 }
-.tv-score-dot  { width: 10px; height: 10px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+.tv-score-dot  { width: 10px; height: 10px; border-radius: 50%; margin-top: 0; flex-shrink: 0; }
 .tv-sc-file    { margin: 0; font-size: 13px; font-weight: 600; color: var(--page-text); }
 .tv-sc-score   { margin: 4px 0 0; font-size: 22px; font-weight: 700; }
 .tv-sc-label   { font-size: 13px; font-weight: 400; color: var(--soft-text); }
@@ -424,7 +451,7 @@ html[data-theme="light"] .usb-panel,
 .usb-file-compat h4 { margin: 0 0 12px; font-size: 14px; font-weight: 700; }
 .usb-file-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   padding: 12px;
   border-radius: 14px;
@@ -439,7 +466,16 @@ html[data-theme="light"] .usb-panel,
 .usb-file-status { margin: 3px 0 0; font-size: 13px; color: var(--muted-text); }
 .usb-issue       { margin: 4px 0 0; font-size: 12px; color: #ff6b6b; }
 .usb-warning     { margin: 4px 0 0; font-size: 12px; color: #ff9f0a; }
-.usb-size        { font-size: 12px; color: var(--soft-text); flex-shrink: 0; }
+.usb-size        {
+  font-size: 12px;
+  color: var(--soft-text);
+  flex-shrink: 0;
+  min-width: 74px;
+  text-align: right;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.02);
+}
 
 /* USB tips */
 .usb-tips h4 { margin: 0 0 10px; font-size: 14px; font-weight: 700; }
@@ -891,6 +927,15 @@ html[data-theme="light"] .tool-card,
 .theme-light .sbc-track { background: rgba(0,0,0,0.06); }
 .theme-light .progress-toast { background: rgba(0,102,204,0.07); }
 .theme-light .conv-cmd { background: rgba(0,0,0,0.06); }
+.theme-light .radar-wrap svg text {
+  fill: rgba(0,0,0,0.55) !important;
+}
+.theme-light .radar-wrap svg line {
+  stroke: rgba(0,0,0,0.08) !important;
+}
+.theme-light .radar-wrap svg .radar-grid-ring {
+  stroke: rgba(0,0,0,0.08) !important;
+}
 .theme-light .dash-header h2 {
   background: linear-gradient(135deg, #1d1d1f, rgba(0,0,0,0.5));
   -webkit-background-clip: text;
