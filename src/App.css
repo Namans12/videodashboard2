@@ -34,6 +34,7 @@ html[data-theme="light"] .app-shell,
   --panel-border: rgba(0,0,0,0.08);
   --section-dark: #e8edf5;
   --card-bg:      rgba(255,255,255,0.85);
+  --accent-bright: #0071e3;
 }
 
 /* ── Nav ────────────────────────────────────────────────────────────────────── */
@@ -634,6 +635,60 @@ html[data-theme="light"] .tool-card,
 .r9  { color: #ff4d2e; }
 .r10 { color: #ff3d2e; }
 .r11 { color: #ff2a2a; opacity: .85; }
+
+/* ── Light mode overrides ────────────────────────────────────────────────────── */
+
+/* Nav links use accent blue (not black) in light mode */
+.theme-light .nav-links a { color: var(--accent-bright); }
+.theme-light .nav-links a:hover { color: var(--accent); }
+
+/* Dark-section text must flip to dark in light mode — otherwise white-on-light */
+.theme-light .info-section-dark { color: var(--section-light-text); }
+
+/* Dashboard / leaderboard rows: give a very light blue tint instead of near-invisible white */
+.theme-light .dashboard-section {
+  background: var(--section-dark);
+}
+.theme-light .lb-row {
+  background: rgba(41,151,255,.05);
+  border-color: rgba(41,151,255,.14);
+}
+.theme-light .lb-best { background: rgba(41,151,255,.10); }
+
+/* Bar/chart tracks: rgba(white) is invisible on a light page — use a dark tint */
+.theme-light .bar-track { background: rgba(0,0,0,.08); }
+.theme-light .sbc-track  { background: rgba(0,0,0,.08); }
+.theme-light .bc-track   { background: rgba(0,0,0,.08); }
+
+/* Score panel: blue tint on white is fine, but bump opacity */
+.theme-light .score-panel {
+  background: rgba(0,113,227,.08);
+  border-color: rgba(0,113,227,.22);
+}
+
+/* Tags: runtime tag background is near-invisible on white */
+.theme-light .tag-runtime { background: rgba(0,0,0,.06); }
+
+/* Conversion command block */
+.theme-light .conv-cmd {
+  background: rgba(0,0,0,.06);
+  color: var(--accent);
+}
+
+/* TV/USB score chips */
+.theme-light .tv-score-chip {
+  background: rgba(41,151,255,.05);
+  border-color: rgba(41,151,255,.14);
+}
+
+/* Leaderboard score text stays blue */
+.theme-light .lb-score-tv { color: var(--accent-bright); }
+
+/* USB spec blocks */
+.theme-light .usb-spec-block { background: rgba(41,151,255,.05); }
+
+/* Magnet result rows */
+.theme-light #magnet-results { background: var(--section-dark); }
 
 /* ── Responsive ──────────────────────────────────────────────────────────────── */
 @media (max-width: 900px) {

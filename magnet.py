@@ -135,8 +135,10 @@ def fetch_magnet_metadata(
         try:
             params = lt.parse_magnet_uri(magnet_uri)
             params.save_path = workdir
-            params.flags |= lt.torrent_flags.upload_mode  # don't seed
             handle = session.add_torrent(params)
+            # Prevent uploading to peers — we only want to pull metadata/head.
+            # upload_mode would block DOWNLOADING too, so use upload limit instead.
+            handle.set_upload_limit(1)
         except Exception as exc:
             raise ValueError(f"Invalid magnet URI: {exc}") from exc
 
@@ -190,8 +192,12 @@ def fetch_magnet_metadata(
                 "analyses": [],
             }
 
-        # Skip all files by default, then enable head/tail for video candidates.
-        handle.prioritize_files([0] * num_files)
+        # File priorities: video files need priority ≥1 so libtorrent allocates
+        # their storage and writes pieces to disk.  Everything else is skipped.
+        file_priorities = [1 if i in set(video_indexes) else 0 for i in range(num_files)]
+        handle.prioritize_files(file_priorities)
+
+        # Compute head+tail pieces for each video file.
         priority_pieces: list[int] = []
         for idx in video_indexes:
             f_offset = files.file_offset(idx)
@@ -200,8 +206,9 @@ def fetch_magnet_metadata(
                 _pieces_for_range(piece_length, f_offset, f_size, HEAD_BYTES, TAIL_BYTES)
             )
         priority_pieces = sorted(set(priority_pieces))
-        emit(f"Downloading {len(priority_pieces)} piece(s) "
-             f"(~{len(priority_pieces) * piece_length / 1024 / 1024:.1f} MB) for verification…")
+        est_mb = len(priority_pieces) * piece_length / 1024 / 1024
+        emit(f"Downloading {len(priority_pieces)} piece(s) (~{est_mb:.1f} MB) for verification…")
+        # Elevate head/tail pieces to maximum priority and request immediately.
         for p in priority_pieces:
             handle.piece_priority(p, 7)
             handle.set_piece_deadline(p, 0)
