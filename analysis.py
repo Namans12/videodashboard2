@@ -15,9 +15,9 @@ VIDEO_EXTENSIONS = (".mkv", ".mp4", ".ts", ".m2ts", ".hevc", ".h265")
 
 MEDIAINFO_TIMEOUT_SECONDS = 90
 FFPROBE_TIMEOUT_SECONDS   = 90
-FFMPEG_TIMEOUT_SECONDS    = 120
+FFMPEG_TIMEOUT_SECONDS    = 45    # only used for dovi ffmpeg sample extraction
 DOVI_TIMEOUT_SECONDS      = 60
-FFMPEG_SAMPLE_FRAMES      = 120
+FFMPEG_SAMPLE_FRAMES      = 30    # 30 frames (~1.25s) — enough for DV profile detection
 
 logger = logging.getLogger("video-analyzer.analysis")
 

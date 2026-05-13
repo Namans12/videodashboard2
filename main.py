@@ -430,7 +430,7 @@ _magnet_cancel: dict[str, bool] = {}
 
 @app.post("/magnet/")
 async def analyze_magnet(background_tasks: BackgroundTasks, request: Request,
-                         fast: bool = Query(True)):
+                         fast: bool = Query(False)):
     """Accept a magnet URI, fetch its metadata + head/tail slices, classify
     each video file, and run ffprobe against the partial files.
 

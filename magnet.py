@@ -285,11 +285,23 @@ def fetch_magnet_metadata(
                 rec["reasons"].append("header slice not written to disk")
                 continue
             emit(f"Probing {os.path.basename(rec['name'])}…")
+            # Copy HEAD_BYTES into a clean truncated file so MediaInfo reads a
+            # proper EOF instead of seeking into the sparse zero-filled region
+            # that libtorrent allocates for the full file size.
+            ext = os.path.splitext(local_path)[1]
+            probe_path = local_path + ".__probe__" + ext
             try:
-                result = analyze_file(local_path, skip_dovi_scan=skip_dovi_scan)
+                with open(local_path, "rb") as _src, open(probe_path, "wb") as _dst:
+                    _dst.write(_src.read(HEAD_BYTES))
+                result = analyze_file(probe_path, skip_dovi_scan=skip_dovi_scan)
             except Exception as exc:
                 logger.warning("ffprobe failed on partial %s: %s", local_path, exc)
                 result = None
+            finally:
+                try:
+                    os.remove(probe_path)
+                except OSError:
+                    pass
             if result:
                 result["file"]           = os.path.basename(rec["name"])
                 result["path"]           = rec["name"]
