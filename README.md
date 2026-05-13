@@ -80,6 +80,16 @@ npm install axios
 python -m pip install fastapi "uvicorn[standard]" python-multipart
 ```
 
+For the magnet-link feature you also need libtorrent:
+
+```bash
+python -m pip install libtorrent
+# macOS may also need: brew install libtorrent-rasterbar
+# Debian/Ubuntu may use: sudo apt install python3-libtorrent
+```
+
+The rest of the app boots fine without it — only the `/magnet/` endpoint will return an error explaining how to install it.
+
 Optional (for helper scripts):
 
 ```bash
@@ -108,10 +118,22 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-local.ps1 -Host 127.0.0
 
 ## How To Use
 
-1. Drag and drop video files, browse for files, or paste a server-local file/folder path.
+1. Drag and drop video files, browse for files, paste a server-local file/folder path, or paste a magnet link.
 2. Toggle Fast mode if you want quicker scans (skips deep RPU scan path).
-3. Click Analyze.
+3. Click Analyze (or Analyze Magnet).
 4. Review ranked results, DV profile details, confidence, and USB compatibility guidance.
+
+### Magnet links
+
+Paste a `magnet:?` URI into the magnet input. The backend will:
+
+1. Fetch the torrent's metadata (file list) — no actual files downloaded yet.
+2. Classify each entry: video files vs. junk (`.rar`, `.exe`, `sample`, etc.).
+3. Download only the first ~6 MB and last ~4 MB of each video file (enough for `ffprobe` to read the header / `moov` atom).
+4. Run the standard analysis on each partial file and mark which ones are good or bad to play.
+5. Delete the partial download and tear down the torrent session.
+
+The torrent session never seeds, never downloads full files, and the temp directory is removed regardless of success or failure.
 
 ## API Endpoints
 
@@ -125,6 +147,8 @@ Core routes exposed by the backend:
 - GET /job/{job_id} - poll job status/results
 - GET /job/{job_id}/events - SSE stream of job events
 - GET /scan-folder/ - synchronous folder scan
+- POST /magnet/ - submit a magnet link; fetches metadata + head/tail slices, classifies each file, and runs ffprobe on the partial data (cleans up afterward)
+- POST /magnet/{job_id}/cancel - cancel an in-flight magnet job
 
 ## Helper Scripts
 

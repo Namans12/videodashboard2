@@ -1,0 +1,306 @@
+"""Magnet-link metadata fetcher.
+
+Fetches a torrent's metadata (file list) via libtorrent without downloading
+full files, then pulls a small head/tail slice of each video file so ffprobe
+can verify the codec/container is real. Returns a structured verdict for each
+file so the UI can show good vs. bad candidates. Always cleans up the
+temporary download directory.
+
+The libtorrent import is intentionally lazy so the rest of the FastAPI app
+keeps booting even when the binding is missing on this machine.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import re
+import shutil
+import tempfile
+import threading
+import time
+from typing import Any, Callable
+
+from analysis import analyze_file
+
+logger = logging.getLogger("video-analyzer.magnet")
+
+VIDEO_EXTS = (".mkv", ".mp4", ".ts", ".m2ts", ".hevc", ".h265")
+JUNK_NAME_PATTERNS = (
+    r"\bsample\b", r"\btrailer\b", r"\brarbg\b\.txt",
+)
+JUNK_EXTS = (".exe", ".rar", ".zip", ".7z", ".iso", ".nfo", ".txt", ".srr", ".srt")
+HEAD_BYTES = 6 * 1024 * 1024   # 6 MB head — enough for MKV header / MP4 ftyp
+TAIL_BYTES = 4 * 1024 * 1024   # 4 MB tail — covers MP4 moov-at-end
+METADATA_TIMEOUT_S = 90
+PIECE_TIMEOUT_S = 180
+
+
+class MagnetUnavailable(RuntimeError):
+    """Raised when libtorrent isn't installed."""
+
+
+def _load_libtorrent():
+    try:
+        import libtorrent as lt  # type: ignore
+    except ImportError as exc:
+        raise MagnetUnavailable(
+            "libtorrent is not installed. Install it with "
+            "`pip install libtorrent` (you may also need the system "
+            "package, e.g. `brew install libtorrent-rasterbar` on macOS "
+            "or `apt install python3-libtorrent` on Debian/Ubuntu)."
+        ) from exc
+    return lt
+
+
+def _classify_file(name: str, size: int) -> dict[str, Any]:
+    base = os.path.basename(name).lower()
+    ext = os.path.splitext(base)[1]
+    reasons: list[str] = []
+    verdict = "good"
+
+    if ext in JUNK_EXTS:
+        verdict = "bad"
+        reasons.append(f"non-video extension ({ext})")
+    elif ext not in VIDEO_EXTS:
+        verdict = "skip"
+        reasons.append(f"unsupported extension ({ext or 'none'})")
+
+    for pattern in JUNK_NAME_PATTERNS:
+        if re.search(pattern, base, re.IGNORECASE):
+            verdict = "bad"
+            reasons.append(f"matches junk pattern '{pattern}'")
+
+    if ext in VIDEO_EXTS and size < 50 * 1024 * 1024:
+        verdict = "bad"
+        reasons.append(f"suspiciously small for a video ({size/1024/1024:.1f} MB)")
+
+    if size > 200 * 1024 * 1024 * 1024:
+        reasons.append(f"very large ({size/1024**3:.1f} GB)")
+
+    return {"verdict": verdict, "reasons": reasons, "ext": ext}
+
+
+def _pieces_for_range(piece_length: int, file_offset: int,
+                      file_size: int, head_bytes: int, tail_bytes: int) -> list[int]:
+    """Piece indexes covering the first `head_bytes` and last `tail_bytes` of a file."""
+    if file_size <= 0:
+        return []
+    first_piece = file_offset // piece_length
+    last_piece_of_file = (file_offset + file_size - 1) // piece_length
+
+    head_end_byte = file_offset + min(head_bytes, file_size) - 1
+    head_last_piece = head_end_byte // piece_length
+
+    tail_start_byte = file_offset + max(0, file_size - tail_bytes)
+    tail_first_piece = tail_start_byte // piece_length
+
+    pieces: set[int] = set()
+    pieces.update(range(first_piece, head_last_piece + 1))
+    pieces.update(range(tail_first_piece, last_piece_of_file + 1))
+    return sorted(pieces)
+
+
+def fetch_magnet_metadata(
+    magnet_uri: str,
+    skip_dovi_scan: bool = True,
+    emit: Callable[[str], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
+    """Download metadata + head/tail of each video file in the magnet.
+
+    Returns a dict with `files` (per-file verdicts), `analyses` (full VideoData
+    for files that survived ffprobe), and `info_hash`/`name` torrent details.
+
+    Always tears down the libtorrent session and removes the temp directory.
+    """
+    lt = _load_libtorrent()
+    emit = emit or (lambda _msg: None)
+    cancel_check = cancel_check or (lambda: False)
+
+    workdir = tempfile.mkdtemp(prefix="videolyzer-magnet-")
+    session: Any = None
+    handle: Any = None
+
+    try:
+        emit("Starting libtorrent session…")
+        session = lt.session({
+            "listen_interfaces": "0.0.0.0:6881",
+            "alert_mask": lt.alert.category_t.all_categories,
+        })
+        session.add_dht_router("router.bittorrent.com", 6881)
+        session.add_dht_router("dht.transmissionbt.com", 6881)
+        session.add_dht_router("router.utorrent.com", 6881)
+
+        try:
+            params = lt.parse_magnet_uri(magnet_uri)
+            params.save_path = workdir
+            params.flags |= lt.torrent_flags.upload_mode  # don't seed
+            handle = session.add_torrent(params)
+        except Exception as exc:
+            raise ValueError(f"Invalid magnet URI: {exc}") from exc
+
+        emit("Fetching torrent metadata via DHT/peers…")
+        deadline = time.time() + METADATA_TIMEOUT_S
+        while not handle.status().has_metadata:
+            if cancel_check():
+                raise RuntimeError("Cancelled")
+            if time.time() > deadline:
+                raise TimeoutError(
+                    f"No metadata received within {METADATA_TIMEOUT_S}s. "
+                    "The torrent may have no live peers."
+                )
+            time.sleep(0.5)
+
+        torrent_info = handle.torrent_file()
+        files = torrent_info.files()
+        piece_length = torrent_info.piece_length()
+        torrent_name = torrent_info.name()
+        info_hash = str(torrent_info.info_hash())
+        num_files = files.num_files()
+        emit(f"Metadata received: '{torrent_name}' — {num_files} file(s)")
+
+        file_records: list[dict[str, Any]] = []
+        video_indexes: list[int] = []
+        for i in range(num_files):
+            f_path = files.file_path(i)
+            f_size = files.file_size(i)
+            cls = _classify_file(f_path, f_size)
+            rec = {
+                "index": i,
+                "name": f_path,
+                "size_bytes": f_size,
+                "size_gb": round(f_size / (1024**3), 3),
+                "ext": cls["ext"],
+                "verdict": cls["verdict"],
+                "reasons": cls["reasons"],
+                "ffprobe_ok": False,
+                "analysis_path": None,
+            }
+            file_records.append(rec)
+            if cls["verdict"] == "good":
+                video_indexes.append(i)
+
+        if not video_indexes:
+            emit("No playable video files in this torrent.")
+            return {
+                "torrent_name": torrent_name,
+                "info_hash": info_hash,
+                "files": file_records,
+                "analyses": [],
+            }
+
+        # Skip all files by default, then enable head/tail for video candidates.
+        handle.prioritize_files([0] * num_files)
+        priority_pieces: list[int] = []
+        for idx in video_indexes:
+            f_offset = files.file_offset(idx)
+            f_size = files.file_size(idx)
+            priority_pieces.extend(
+                _pieces_for_range(piece_length, f_offset, f_size, HEAD_BYTES, TAIL_BYTES)
+            )
+        priority_pieces = sorted(set(priority_pieces))
+        emit(f"Downloading {len(priority_pieces)} piece(s) "
+             f"(~{len(priority_pieces) * piece_length / 1024 / 1024:.1f} MB) for verification…")
+        for p in priority_pieces:
+            handle.piece_priority(p, 7)
+            handle.set_piece_deadline(p, 0)
+
+        deadline = time.time() + PIECE_TIMEOUT_S
+        while True:
+            if cancel_check():
+                raise RuntimeError("Cancelled")
+            if all(handle.have_piece(p) for p in priority_pieces):
+                break
+            if time.time() > deadline:
+                missing = sum(1 for p in priority_pieces if not handle.have_piece(p))
+                emit(f"⚠ Timed out waiting for pieces — {missing} still missing. "
+                     "Continuing with what we have.")
+                break
+            time.sleep(1.0)
+
+        analyses: list[dict[str, Any]] = []
+        for idx in video_indexes:
+            rec = file_records[idx]
+            local_path = os.path.join(workdir, files.file_path(idx))
+            if not os.path.isfile(local_path):
+                rec["verdict"] = "bad"
+                rec["reasons"].append("partial file not written to disk")
+                continue
+            emit(f"Probing {os.path.basename(rec['name'])}…")
+            try:
+                result = analyze_file(local_path, skip_dovi_scan=skip_dovi_scan)
+            except Exception as exc:
+                logger.warning("ffprobe failed on partial %s: %s", local_path, exc)
+                result = None
+            if result:
+                result["file"] = os.path.basename(rec["name"])
+                result["path"] = rec["name"]
+                result["magnet_partial"] = True
+                rec["ffprobe_ok"] = True
+                rec["analysis_path"] = result["path"]
+                analyses.append(result)
+            else:
+                rec["verdict"] = "bad"
+                rec["reasons"].append("ffprobe could not parse the head/tail slice")
+
+        return {
+            "torrent_name": torrent_name,
+            "info_hash": info_hash,
+            "files": file_records,
+            "analyses": analyses,
+        }
+    finally:
+        emit("Cleaning up torrent session and temp files…")
+        if session is not None and handle is not None:
+            try:
+                session.remove_torrent(handle, lt.session.delete_files)  # type: ignore[attr-defined]
+            except Exception:
+                try:
+                    session.remove_torrent(handle)
+                except Exception:
+                    pass
+        if session is not None:
+            try:
+                session.pause()
+            except Exception:
+                pass
+        # libtorrent does the file deletion asynchronously; give it a beat,
+        # then nuke the dir ourselves to be sure.
+        time.sleep(0.5)
+        try:
+            shutil.rmtree(workdir, ignore_errors=True)
+        except Exception as exc:
+            logger.warning("Failed to remove magnet workdir %s: %s", workdir, exc)
+        # Drop the session reference so its thread can exit.
+        session = None
+
+
+def run_magnet_job_threaded(magnet_uri: str, skip_dovi_scan: bool,
+                            emit: Callable[[str], None],
+                            cancel_check: Callable[[], bool]) -> dict[str, Any]:
+    """Wrapper to run fetch_magnet_metadata with an absolute upper-bound timeout."""
+    result_holder: list[Any] = [None]
+    error_holder: list[BaseException | None] = [None]
+
+    def _run() -> None:
+        try:
+            result_holder[0] = fetch_magnet_metadata(
+                magnet_uri, skip_dovi_scan=skip_dovi_scan,
+                emit=emit, cancel_check=cancel_check,
+            )
+        except BaseException as e:  # noqa: BLE001 — surface anything to caller
+            error_holder[0] = e
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    # Hard cap: metadata + pieces + cleanup
+    t.join(timeout=METADATA_TIMEOUT_S + PIECE_TIMEOUT_S + 30)
+    if t.is_alive():
+        raise TimeoutError(
+            "Magnet job exceeded the hard timeout. The torrent likely has "
+            "no live seeders."
+        )
+    if error_holder[0]:
+        raise error_holder[0]
+    return result_holder[0]

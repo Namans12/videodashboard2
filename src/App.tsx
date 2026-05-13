@@ -5,8 +5,7 @@ import React, {
   useState,
   useEffect
 } from "react";
-import axios from "axios";
-import type { VideoData } from "./types";
+import type { VideoData, MagnetFile, MagnetTorrent } from "./types";
 import { BRAVIA_8_II_SPEC } from "./types";
 import "./App.css";
 import Switch from "./Switch";
@@ -459,6 +458,11 @@ export default function App() {
   const [progressMsg, setProgressMsg] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const [magnetUri,     setMagnetUri]     = useState("");
+  const [magnetFiles,   setMagnetFiles]   = useState<MagnetFile[]>([]);
+  const [magnetTorrent, setMagnetTorrent] = useState<MagnetTorrent | null>(null);
+  const [magnetJobId,   setMagnetJobId]   = useState<string | null>(null);
+
   // ── File selection ─────────────────────────────────────────────────────────
   const addFiles = (incoming: FileList | File[]) => {
     const valid = Array.from(incoming).filter((f) =>
@@ -605,19 +609,10 @@ export default function App() {
       localStorage.setItem("last_results", JSON.stringify(results));
     } catch (err: unknown) {
       let message = "Analysis failed.";
-      if (axios.isAxiosError(err)) {
-        const status = err.response?.status;
-        const detail = err.response?.data?.detail;
-        if (status === 507) {
-          message = `🖴 Server disk full: ${detail ?? "Free up space on the server and retry."}`;
-        } else {
-          message =
-            (typeof detail === "string" && detail) || err.message || message;
-        }
-      } else if (err instanceof Error) {
+      if (err instanceof Error) {
         const text = err.message;
         message = text.includes("path input")
-          ? "📁 " + text   // already has good instructions
+          ? "📁 " + text
           : text.includes("507")
           ? "🖴 Server disk full — free up space in the uploads/ folder and retry."
           : text;
@@ -634,6 +629,83 @@ export default function App() {
     setPath("");
     setSelectedFiles([]);
     setError("");
+  };
+
+  const analyzeMagnet = async () => {
+    const trimmed = magnetUri.trim();
+    if (!trimmed) {
+      setError("Paste a magnet: URI first.");
+      return;
+    }
+    if (!trimmed.toLowerCase().startsWith("magnet:?")) {
+      setError("That doesn't look like a magnet URI — it should start with 'magnet:?'.");
+      return;
+    }
+
+    setError("");
+    setIsLoading(true);
+    setMagnetFiles([]);
+    setMagnetTorrent(null);
+
+    try {
+      const res = await fetch(`${API}/magnet/?fast=${fastMode}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ magnet: trimmed }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({})) as { detail?: string };
+        throw new Error(payload.detail ?? "Magnet request failed.");
+      }
+      const { job_id } = await res.json() as { job_id: string };
+      setMagnetJobId(job_id);
+      setJobId(job_id);
+
+      type MagnetJob = {
+        status: string; progress: string; current: string;
+        results: VideoData[]; error: string | null;
+        magnet_files: MagnetFile[];
+        magnet_torrent: MagnetTorrent | null;
+        events: { msg: string; ts: number }[];
+      };
+
+      const job = await new Promise<MagnetJob>((resolve, reject) => {
+        const poll = async () => {
+          if (abortRef.current) {
+            try {
+              await fetch(`${API}/magnet/${job_id}/cancel`, { method: "POST" });
+            } catch { /* ignore */ }
+            reject(new Error("Cancelled."));
+            return;
+          }
+          try {
+            const r = await fetch(`${API}/job/${job_id}`);
+            const j = await r.json() as MagnetJob;
+            const last = j.events.at(-1);
+            if (last) setProgressMsg(last.msg);
+            if (j.status === "done") resolve(j);
+            else if (j.status === "error") reject(new Error(j.error ?? "Magnet job failed."));
+            else setTimeout(poll, 800);
+          } catch (e) { reject(e); }
+        };
+        poll();
+      });
+
+      setMagnetFiles(job.magnet_files);
+      setMagnetTorrent(job.magnet_torrent);
+      const ranked = (job.results ?? []).filter(Boolean);
+      setData(ranked);
+      localStorage.setItem("last_results", JSON.stringify(ranked));
+      setProgressMsg("");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Magnet analysis failed.");
+      setData([]);
+    } finally {
+      abortRef.current = false;
+      setIsLoading(false);
+      setMagnetJobId(null);
+      setJobId(null);
+    }
   };
 
   const bestPath = data[0]?.path;
@@ -754,6 +826,61 @@ export default function App() {
               </form>
             </div>
 
+            {/* ── Magnet link row ─────────────────────────────────────── */}
+            <div className="path-row">
+              <label className="input-label" htmlFor="magnet-uri">
+                Or paste a magnet link
+              </label>
+              <form
+                className="search-form"
+                onSubmit={(e) => { e.preventDefault(); void analyzeMagnet(); }}
+              >
+                <span className="search-icon-button" aria-hidden="true"
+                      style={{ pointerEvents: "none" }}>
+                  <svg width={17} height={16} viewBox="0 0 24 24" fill="none"
+                       stroke="currentColor" strokeWidth="1.5"
+                       strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M16 4h4v4"/>
+                    <path d="M14 10l6-6"/>
+                    <path d="M8 20H4v-4"/>
+                    <path d="M10 14l-6 6"/>
+                    <path d="M8 4h8a4 4 0 0 1 4 4v8"/>
+                  </svg>
+                </span>
+                <input
+                  id="magnet-uri"
+                  className="search-input"
+                  placeholder="magnet:?xt=urn:btih:…"
+                  value={magnetUri}
+                  onChange={(e) => setMagnetUri(e.target.value)}
+                  type="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <button
+                  className="search-reset"
+                  type="button"
+                  aria-label="Clear magnet"
+                  onClick={() => { setMagnetUri(""); setMagnetFiles([]); setMagnetTorrent(null); }}
+                  disabled={!magnetUri && !magnetFiles.length}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="reset-icon" fill="none"
+                    viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                  </svg>
+                </button>
+              </form>
+              <button
+                type="button"
+                className="primary-button"
+                style={{ marginTop: 8 }}
+                onClick={() => void analyzeMagnet()}
+                disabled={isLoading || !magnetUri.trim()}
+              >
+                {magnetJobId ? "Fetching torrent…" : "Analyze Magnet"}
+              </button>
+            </div>
+
             {/* ── Browse + fast mode row ────────────────────────────────── */}
             <div className="choose-row">
               <span className="input-label">Options</span>
@@ -824,6 +951,50 @@ export default function App() {
       />
 
       {error && <div className="error-box">{error}</div>}
+
+      {magnetFiles.length > 0 && (
+        <section id="magnet-results" className="dashboard-section">
+          <div className="dashboard-inner">
+            <div className="dash-header">
+              <h2>Magnet Contents</h2>
+              <p className="dash-sub">
+                {magnetTorrent?.name ?? "torrent"}{" "}
+                {magnetTorrent?.info_hash && (
+                  <span style={{ opacity: 0.6, fontFamily: "monospace", fontSize: 12 }}>
+                    · {magnetTorrent.info_hash}
+                  </span>
+                )}
+              </p>
+            </div>
+            <div className="leaderboard">
+              {magnetFiles.map((mf) => {
+                const color =
+                  mf.verdict === "good" ? "#30d158" :
+                  mf.verdict === "bad"  ? "#ff453a" : "#ff9f0a";
+                const verdictLabel =
+                  mf.verdict === "good" ? (mf.ffprobe_ok ? "PLAYABLE" : "LIKELY OK")
+                  : mf.verdict === "bad" ? "AVOID" : "SKIP";
+                return (
+                  <div key={mf.index} className="lb-row">
+                    <span className="lb-rank" style={{ color }}>{verdictLabel}</span>
+                    <div className="lb-file">
+                      <p className="lb-name">{mf.name}</p>
+                      <p className="lb-meta">
+                        {mf.ext || "no ext"} · {mf.size_gb.toFixed(2)} GB
+                        {mf.reasons.length > 0 && " · " + mf.reasons.join(" · ")}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="dash-sub" style={{ marginTop: 12 }}>
+              Playable files appear in the dashboard below with full DV / HDR analysis.
+              All torrent data has been cleaned up from disk.
+            </p>
+          </div>
+        </section>
+      )}
 
       {/* ── Dashboard ───────────────────────────────────────────────────── */}
       {showDashboard && (

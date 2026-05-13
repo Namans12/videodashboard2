@@ -18,6 +18,7 @@ import asyncio
 import json
 
 from analysis import analyze_file, scan_folder
+from magnet import MagnetUnavailable, run_magnet_job_threaded
 
 logger = logging.getLogger("video-analyzer.api")
 
@@ -422,6 +423,103 @@ def _run_path_job(job_id: str, path: str, fast: bool) -> None:
     job["status"]  = "done"
     emit("Done.")
     threading.Timer(30.0, _cleanup_old_jobs).start()
+
+
+_magnet_cancel: dict[str, bool] = {}
+
+
+@app.post("/magnet/")
+async def analyze_magnet(background_tasks: BackgroundTasks, request: Request,
+                         fast: bool = Query(True)):
+    """Accept a magnet URI, fetch its metadata + head/tail slices, classify
+    each video file, and run ffprobe against the partial files.
+
+    Returns a `job_id` immediately. Reuses the existing job poll/SSE endpoints
+    for status streaming. Adds `magnet_files` (per-file verdicts) and
+    `magnet_torrent` (name + info_hash) onto the job record alongside the
+    usual `results` array.
+    """
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {exc}") from exc
+
+    magnet_uri = (body or {}).get("magnet", "").strip()
+    if not magnet_uri:
+        raise HTTPException(status_code=400, detail="Missing `magnet` field in JSON body.")
+    if not magnet_uri.lower().startswith("magnet:?"):
+        raise HTTPException(status_code=400,
+                            detail="Not a magnet URI — must start with 'magnet:?'.")
+
+    job_id = uuid.uuid4().hex
+    _jobs[job_id] = {
+        "status": "running",
+        "progress": "metadata",
+        "current": "",
+        "total": 0,
+        "results": [],
+        "error": None,
+        "events": [],
+        "magnet_files": [],
+        "magnet_torrent": None,
+    }
+    _magnet_cancel[job_id] = False
+    background_tasks.add_task(_run_magnet_job, job_id, magnet_uri, fast)
+    return {"job_id": job_id}
+
+
+@app.post("/magnet/{job_id}/cancel")
+def cancel_magnet(job_id: str):
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    _magnet_cancel[job_id] = True
+    return {"ok": True}
+
+
+def _run_magnet_job(job_id: str, magnet_uri: str, fast: bool) -> None:
+    job = _jobs[job_id]
+
+    def emit(msg: str) -> None:
+        job["events"].append({"msg": msg, "ts": time.time()})
+
+    def cancel_check() -> bool:
+        return _magnet_cancel.get(job_id, False)
+
+    emit("Magnet job started")
+    try:
+        out = run_magnet_job_threaded(
+            magnet_uri,
+            skip_dovi_scan=fast,
+            emit=emit,
+            cancel_check=cancel_check,
+        )
+        results = rank_results(out.get("analyses", []))
+        job["results"] = results
+        job["magnet_files"] = out.get("files", [])
+        job["magnet_torrent"] = {
+            "name": out.get("torrent_name"),
+            "info_hash": out.get("info_hash"),
+        }
+        job["total"] = len(out.get("files", []))
+        job["progress"] = f"{len(results)}/{job['total']}"
+        job["status"] = "done"
+        emit(f"Done — {len(results)} playable / {job['total']} total file(s).")
+    except MagnetUnavailable as exc:
+        job["status"] = "error"
+        job["error"] = str(exc)
+        emit(f"Error: {exc}")
+    except TimeoutError as exc:
+        job["status"] = "error"
+        job["error"] = str(exc)
+        emit(f"Timed out: {exc}")
+    except Exception as exc:
+        logger.exception("Magnet job %s failed", job_id)
+        job["status"] = "error"
+        job["error"] = str(exc)
+        emit(f"Error: {exc}")
+    finally:
+        _magnet_cancel.pop(job_id, None)
+        threading.Timer(30.0, _cleanup_old_jobs).start()
 
 
 @app.get("/scan-folder/")

@@ -73,6 +73,29 @@ export interface VideoData {
   signal_facts: FactItem[];
   media_facts: FactItem[];
   tool_reports: ToolReport[];
+
+  // Magnet-mode marker — true when the analysis came from a partial
+  // (head/tail) torrent download rather than a complete file.
+  magnet_partial?: boolean;
+}
+
+export type MagnetVerdict = "good" | "bad" | "skip";
+
+export interface MagnetFile {
+  index: number;
+  name: string;
+  size_bytes: number;
+  size_gb: number;
+  ext: string;
+  verdict: MagnetVerdict;
+  reasons: string[];
+  ffprobe_ok: boolean;
+  analysis_path: string | null;
+}
+
+export interface MagnetTorrent {
+  name: string | null;
+  info_hash: string | null;
 }
 
 // Sony Bravia 8 Mark II specs (static, for UI display)
