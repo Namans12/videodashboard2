@@ -26,15 +26,18 @@
 .app-shell.theme-light,
 html[data-theme="light"] .app-shell,
 .app-shell[data-theme="light"] {
-  --page-bg:      #f5f5f7;
+  --page-bg:      #eef4ff;
   --page-text:    #1d1d1f;
   --muted-text:   rgba(0,0,0,0.8);
   --soft-text:    rgba(0,0,0,0.55);
-  --panel-bg:     rgba(255,255,255,0.78);
-  --panel-border: rgba(0,0,0,0.08);
-  --section-dark: #e8edf5;
-  --card-bg:      rgba(255,255,255,0.85);
-  --accent-bright: #0071e3;
+  --panel-bg:     rgba(255,255,255,0.88);
+  --panel-border: rgba(0,113,227,0.14);
+  --section-dark: #ddeaff;
+  --card-bg:      rgba(255,255,255,0.92);
+  --accent:       #0058cc;
+  --accent-bright: #2266e3;
+  --search-bg:    #ffffff;
+  --search-text:  #1d1d1f;
 }
 
 /* ── Nav ────────────────────────────────────────────────────────────────────── */
@@ -638,36 +641,60 @@ html[data-theme="light"] .tool-card,
 
 /* ── Light mode overrides ────────────────────────────────────────────────────── */
 
-/* Nav links use accent blue (not black) in light mode */
+/* The whole page has a cool blue-white base from --page-bg: #eef4ff */
+
+/* Nav: blue links, blue bottom border */
+.theme-light .top-nav {
+  background: rgba(238,244,255,0.85);
+  border-bottom-color: rgba(0,88,204,0.18);
+}
 .theme-light .nav-links a { color: var(--accent-bright); }
 .theme-light .nav-links a:hover { color: var(--accent); }
 
-/* Dark-section text must flip to dark in light mode — otherwise white-on-light */
+/* Hero panel: stronger white with blue border */
+.theme-light .hero-panel {
+  background: rgba(255,255,255,0.95);
+  border-color: rgba(0,88,204,0.18);
+}
+
+/* Drop zone */
+.theme-light .drop-zone { border-color: rgba(0,88,204,0.22); }
+.theme-light .drop-zone:hover { background: rgba(34,102,227,0.06); }
+
+/* Dark-section text must flip to dark in light mode (white-on-light-blue = invisible) */
 .theme-light .info-section-dark { color: var(--section-light-text); }
 
-/* Dashboard / leaderboard rows: give a very light blue tint instead of near-invisible white */
+/* Dashboard section gets the light blue background */
 .theme-light .dashboard-section {
   background: var(--section-dark);
+  border-color: rgba(0,88,204,0.12);
 }
+
+/* Leaderboard rows: blue tint */
 .theme-light .lb-row {
-  background: rgba(41,151,255,.05);
-  border-color: rgba(41,151,255,.14);
+  background: rgba(255,255,255,0.82);
+  border-color: rgba(0,88,204,0.14);
 }
-.theme-light .lb-best { background: rgba(41,151,255,.10); }
+.theme-light .lb-best {
+  background: rgba(34,102,227,0.08);
+  border-color: rgba(34,102,227,0.28);
+}
+.theme-light .lb-score-tv { color: var(--accent-bright); }
 
-/* Bar/chart tracks: rgba(white) is invisible on a light page — use a dark tint */
-.theme-light .bar-track { background: rgba(0,0,0,.08); }
-.theme-light .sbc-track  { background: rgba(0,0,0,.08); }
-.theme-light .bc-track   { background: rgba(0,0,0,.08); }
+/* Bar / chart tracks: rgba(white) is invisible on light bg */
+.theme-light .bar-track { background: rgba(0,0,0,.10); }
+.theme-light .sbc-track  { background: rgba(0,0,0,.10); }
+.theme-light .bc-track   { background: rgba(0,0,0,.10); }
 
-/* Score panel: blue tint on white is fine, but bump opacity */
+/* Score panel */
 .theme-light .score-panel {
-  background: rgba(0,113,227,.08);
-  border-color: rgba(0,113,227,.22);
+  background: rgba(34,102,227,0.08);
+  border-color: rgba(34,102,227,0.22);
 }
 
-/* Tags: runtime tag background is near-invisible on white */
-.theme-light .tag-runtime { background: rgba(0,0,0,.06); }
+/* Tags */
+.theme-light .tag-runtime { background: rgba(0,0,0,.07); color: var(--page-text); }
+.theme-light .tag-source  { background: rgba(0,0,0,.07); }
 
 /* Conversion command block */
 .theme-light .conv-cmd {
@@ -675,19 +702,32 @@ html[data-theme="light"] .tool-card,
   color: var(--accent);
 }
 
-/* TV/USB score chips */
-.theme-light .tv-score-chip {
-  background: rgba(41,151,255,.05);
-  border-color: rgba(41,151,255,.14);
+/* Chart cards */
+.theme-light .chart-card {
+  background: rgba(255,255,255,0.9);
+  border-color: rgba(0,88,204,0.14);
 }
 
-/* Leaderboard score text stays blue */
-.theme-light .lb-score-tv { color: var(--accent-bright); }
+/* TV/USB panels */
+.theme-light .tv-score-chip {
+  background: rgba(34,102,227,0.06);
+  border-color: rgba(34,102,227,0.16);
+}
+.theme-light .usb-spec-block { background: rgba(34,102,227,0.05); }
+.theme-light .usb-file-row   { border-color: rgba(0,88,204,0.14); }
 
-/* USB spec blocks */
-.theme-light .usb-spec-block { background: rgba(41,151,255,.05); }
+/* Fact / tool panels */
+.theme-light .fact-panel,
+.theme-light .toolchain-section {
+  background: rgba(255,255,255,0.88);
+  border-color: rgba(0,88,204,0.14);
+}
+.theme-light .tool-card {
+  background: rgba(238,244,255,0.85);
+  border-color: rgba(0,88,204,0.14);
+}
 
-/* Magnet result rows */
+/* Magnet results section */
 .theme-light #magnet-results { background: var(--section-dark); }
 
 /* ── Responsive ──────────────────────────────────────────────────────────────── */

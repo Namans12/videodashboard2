@@ -9,11 +9,12 @@ type Props = {
 export default function Switch({ isLightMode, setIsLightMode }: Props) {
   return (
     <label className="theme-switch">
+      {/* unchecked = day/sun/clouds = light mode  |  checked = night/moon/stars = dark mode */}
       <input
         type="checkbox"
         className="theme-switch__checkbox"
-        checked={isLightMode}
-        onChange={(e) => setIsLightMode(e.target.checked)}
+        checked={!isLightMode}
+        onChange={() => setIsLightMode((v) => !v)}
       />
       <div className="theme-switch__container">
         <div className="theme-switch__clouds"></div>

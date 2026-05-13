@@ -444,11 +444,15 @@ export default function App() {
   const [selectedFiles,    setSelectedFiles]    = useState<File[]>([]);
   const [dragActive,       setDragActive]       = useState(false);
   const [fastMode,         setFastMode]         = useState(true);
-  const [isLightMode,      setIsLightMode]      = useState(() => {
-    return localStorage.getItem("theme") === "light";
+  const [isLightMode,      setIsLightMode]      = useState<boolean>(() => {
+    const saved = localStorage.getItem("theme");
+    if (saved === "light") return true;
+    if (saved === "dark")  return false;
+    // First visit or stale value → default to dark mode
+    return false;
   });
   useEffect(() => {
-  localStorage.setItem("theme", isLightMode ? "light" : "dark");
+    localStorage.setItem("theme", isLightMode ? "light" : "dark");
   }, [isLightMode]);
   useEffect(() => {
     localStorage.setItem("last_results", JSON.stringify(data));
