@@ -32,7 +32,7 @@ JUNK_EXTS = (".exe", ".rar", ".zip", ".7z", ".iso", ".nfo", ".txt", ".srr", ".sr
 
 # MKV: EBML header (codec/HDR/audio) is always at the start → head only.
 # MP4/M2TS: moov atom may be at the end → download both head and tail.
-HEAD_BYTES = 8 * 1024 * 1024   # 8 MB head — codec info, DV signalling, audio headers
+HEAD_BYTES = 32 * 1024 * 1024  # 32 MB head — gives MediaInfo enough SEI / Atmos data
 TAIL_BYTES = 6 * 1024 * 1024   # 6 MB tail — MP4 moov-at-end
 
 METADATA_TIMEOUT_S = 90
@@ -285,14 +285,21 @@ def fetch_magnet_metadata(
                 rec["reasons"].append("header slice not written to disk")
                 continue
             emit(f"Probing {os.path.basename(rec['name'])}…")
-            # Copy HEAD_BYTES into a clean truncated file so MediaInfo reads a
-            # proper EOF instead of seeking into the sparse zero-filled region
-            # that libtorrent allocates for the full file size.
+            # Build a probe file that has the real head bytes followed by a
+            # sparse zero region padding it out to the real torrent file size.
+            # This way MediaInfo reports the true file size (correct bitrate
+            # calculation) but does not encounter random partial data libtorrent
+            # may have written past the head from speculative piece requests.
             ext = os.path.splitext(local_path)[1]
             probe_path = local_path + ".__probe__" + ext
+            real_size = files.file_size(idx)
             try:
-                with open(local_path, "rb") as _src, open(probe_path, "wb") as _dst:
-                    _dst.write(_src.read(HEAD_BYTES))
+                with open(local_path, "rb") as _src:
+                    head_data = _src.read(HEAD_BYTES)
+                with open(probe_path, "wb") as _dst:
+                    _dst.write(head_data)
+                    if real_size > len(head_data):
+                        _dst.truncate(real_size)  # sparse zero padding to real size
                 result = analyze_file(probe_path, skip_dovi_scan=skip_dovi_scan)
             except Exception as exc:
                 logger.warning("ffprobe failed on partial %s: %s", local_path, exc)

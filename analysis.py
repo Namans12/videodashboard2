@@ -195,7 +195,14 @@ def run_mediainfo(file_path: str) -> dict[str, Any] | None:
     mediainfo_bin = resolve_tool("mediainfo", "MediaInfo")
     if not mediainfo_bin:
         return None
-    result = run_command([mediainfo_bin, "--Output=JSON", file_path], timeout=MEDIAINFO_TIMEOUT_SECONDS)
+    # --ParseSpeed=1.0 forces deep stream parsing so SEI HDR metadata
+    # (mastering display, MaxCLL/MaxFALL), HDR10+ profile, Atmos JOC,
+    # and bit depth from the HEVC SPS are all extracted instead of
+    # the quick-parse default (0.5) which often skips them.
+    result = run_command(
+        [mediainfo_bin, "--ParseSpeed=1.0", "--Output=JSON", file_path],
+        timeout=MEDIAINFO_TIMEOUT_SECONDS,
+    )
     if result is None or command_failed(result):
         return None
     try:
