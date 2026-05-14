@@ -203,7 +203,10 @@ def run_mediainfo(file_path: str) -> dict[str, Any] | None:
         [mediainfo_bin, "--ParseSpeed=1.0", "--Output=JSON", file_path],
         timeout=MEDIAINFO_TIMEOUT_SECONDS,
     )
-    if result is None or command_failed(result):
+    # MediaInfo emits non-zero exit on partial/truncated files even when its
+    # JSON output is fully usable — so don't gate on returncode, only on
+    # whether the stdout parses as JSON.
+    if result is None or not result.stdout:
         return None
     try:
         return json.loads(result.stdout)
@@ -312,12 +315,18 @@ def get_bit_depth(video_track: dict[str, Any] | None, ffprobe_video: dict[str, A
         value = coerce_float(raw)
         if value is not None and value > 0:
             return int(value)
+        # pix_fmt looks like "yuv420p10le", "yuv422p12be", "yuv444p", etc.
+        # Old regex r"(\d{2})" matched "42" out of "420" first and bailed.
+        # Match the digits directly after the planar 'p'.
         pix_fmt = normalize_text(ffprobe_video.get("pix_fmt", ""))
-        match   = re.search(r"(\d{2})", pix_fmt)
+        match   = re.search(r"p(\d+)(?:le|be)?$", pix_fmt)
         if match:
             maybe = int(match.group(1))
             if maybe in {8, 9, 10, 12, 14, 16}:
                 return maybe
+        # yuv420p / yuv422p / yuv444p with no trailing depth → 8-bit
+        if re.search(r"yuv\d+p$", pix_fmt):
+            return 8
     if video_track:
         value = coerce_float(video_track.get("BitDepth"))
         if value is not None:

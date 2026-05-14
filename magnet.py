@@ -33,7 +33,7 @@ JUNK_EXTS = (".exe", ".rar", ".zip", ".7z", ".iso", ".nfo", ".txt", ".srr", ".sr
 # MKV: EBML header (codec/HDR/audio) is always at the start → head only.
 # MP4/M2TS: moov atom may be at the end → download both head and tail.
 HEAD_BYTES = 32 * 1024 * 1024  # 32 MB head — gives MediaInfo enough SEI / Atmos data
-TAIL_BYTES = 6 * 1024 * 1024   # 6 MB tail — MP4 moov-at-end
+TAIL_BYTES = 64 * 1024 * 1024  # 64 MB tail — large MP4 moov atoms (4K HEVC, multi-audio)
 
 METADATA_TIMEOUT_S = 90
 PIECE_TIMEOUT_S    = 180
